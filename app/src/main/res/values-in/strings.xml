@@ -75,6 +75,7 @@
     <string name="settings_ocr_suggested">Disarankan</string>
     <string name="settings_section_ocr">Pengenalan teks</string>
     <string name="settings_section_scan">Pindah</string>
+    <string name="settings_torch_always_on">Senter selalu menyala</string>
     <string name="settings_section_export">Ekspor</string>
     <string name="share">Bagikan</string>
     <string name="share_document">Bagikan dokumen</string>

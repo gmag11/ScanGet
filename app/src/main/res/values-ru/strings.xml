@@ -75,6 +75,7 @@
     <string name="settings_ocr_suggested">Рекомендуется</string>
     <string name="settings_section_ocr">Распознавание текста</string>
     <string name="settings_section_scan">Сканирование</string>
+    <string name="settings_torch_always_on">Фонарик всегда включён</string>
     <string name="settings_section_export">Экспорт</string>
     <string name="share">Поделиться</string>
     <string name="share_document">Поделиться документом</string>

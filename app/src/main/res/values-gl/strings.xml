@@ -75,6 +75,7 @@
     <string name="settings_ocr_suggested">Suxerido</string>
     <string name="settings_section_ocr">Recoñecemento de texto</string>
     <string name="settings_section_scan">Escaneo</string>
+    <string name="settings_torch_always_on">Lanterna sempre acendida</string>
     <string name="settings_section_export">Exportación</string>
     <string name="share">Compartir</string>
     <string name="share_document">Compartir documento</string>

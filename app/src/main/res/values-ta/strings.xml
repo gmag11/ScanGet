@@ -76,6 +76,7 @@
     <string name="settings_ocr_suggested">பரிந்துரைக்கப்பட்டது</string>
     <string name="settings_section_ocr">உரை ஏற்பு</string>
     <string name="settings_section_scan">வருடு செய்யவும்</string>
+    <string name="settings_torch_always_on">டார்ச் எப்போதும் இயக்கத்தில்</string>
     <string name="settings_section_export">ஏற்றுமதி</string>
     <string name="share">பங்கு</string>
     <string name="share_document">ஆவணத்தைப் பகிரவும்</string>

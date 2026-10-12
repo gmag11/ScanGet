@@ -69,6 +69,7 @@
     <string name="settings_ocr_suggested">توصیه‌شده</string>
     <string name="settings_section_ocr">تشخیص متن</string>
     <string name="settings_section_scan">پویش</string>
+    <string name="settings_torch_always_on">چراغ‌قوه همیشه روشن</string>
     <string name="settings_section_export">صدور</string>
     <string name="share">همرسانی</string>
     <string name="share_document">همرسانی سند</string>

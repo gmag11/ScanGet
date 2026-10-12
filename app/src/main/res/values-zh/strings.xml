@@ -75,6 +75,7 @@
     <string name="settings_ocr_suggested">推荐</string>
     <string name="settings_section_ocr">文本识别</string>
     <string name="settings_section_scan">扫描</string>
+    <string name="settings_torch_always_on">手电筒常亮</string>
     <string name="settings_section_export">导出</string>
     <string name="share">共享</string>
     <string name="share_document">分享文档</string>

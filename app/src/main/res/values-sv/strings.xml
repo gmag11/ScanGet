@@ -75,6 +75,7 @@
     <string name="settings_ocr_suggested">Föreslagen</string>
     <string name="settings_section_ocr">Textigenkänning</string>
     <string name="settings_section_scan">Skanning</string>
+    <string name="settings_torch_always_on">Ficklampan alltid tänd</string>
     <string name="settings_section_export">Export</string>
     <string name="share">Dela</string>
     <string name="share_document">Dela dokument</string>

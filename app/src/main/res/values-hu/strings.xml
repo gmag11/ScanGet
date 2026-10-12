@@ -75,6 +75,7 @@
     <string name="settings_ocr_suggested">Ajánlott</string>
     <string name="settings_section_ocr">Szövegfelismerés</string>
     <string name="settings_section_scan">Szkennelés</string>
+    <string name="settings_torch_always_on">Zseblámpa mindig bekapcsolva</string>
     <string name="settings_section_export">Exportálás</string>
     <string name="share">Megosztás</string>
     <string name="share_document">Dokumentum megosztása</string>

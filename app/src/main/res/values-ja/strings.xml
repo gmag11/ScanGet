@@ -75,6 +75,7 @@
     <string name="settings_ocr_suggested">おすすめ</string>
     <string name="settings_section_ocr">テキスト認識</string>
     <string name="settings_section_scan">スキャン</string>
+    <string name="settings_torch_always_on">常にライトをオン</string>
     <string name="settings_section_export">エクスポート</string>
     <string name="share">共有</string>
     <string name="share_document">ドキュメントを共有</string>

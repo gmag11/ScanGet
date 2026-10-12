@@ -75,6 +75,7 @@
     <string name="settings_ocr_suggested">مقترح</string>
     <string name="settings_section_ocr">التعرّف على النصوص</string>
     <string name="settings_section_scan">المسح</string>
+    <string name="settings_torch_always_on">الكشاف دائمًا قيد التشغيل</string>
     <string name="settings_section_export">التصدير</string>
     <string name="share">شارك</string>
     <string name="share_document">شارك المستند</string>

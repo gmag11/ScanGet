@@ -76,6 +76,7 @@
     <string name="settings_ocr_suggested">Önerilen</string>
     <string name="settings_section_ocr">Metin tanıma</string>
     <string name="settings_section_scan">Tarama</string>
+    <string name="settings_torch_always_on">El feneri her zaman açık</string>
     <string name="settings_section_export">Dışa aktarma</string>
     <string name="share">Paylaş</string>
     <string name="share_document">Belgeyi paylaş</string>

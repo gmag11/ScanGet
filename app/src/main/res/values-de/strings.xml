@@ -76,6 +76,7 @@
     <string name="settings_ocr_suggested">Empfohlen</string>
     <string name="settings_section_ocr">Texterkennung</string>
     <string name="settings_section_scan">Scan</string>
+    <string name="settings_torch_always_on">Taschenlampe immer an</string>
     <string name="settings_section_export">Export</string>
     <string name="share">Teilen</string>
     <string name="share_document">Dokument teilen</string>

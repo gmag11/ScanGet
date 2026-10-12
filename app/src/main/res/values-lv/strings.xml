@@ -65,6 +65,7 @@
     <string name="settings_section_export">Veidošana</string>
     <string name="export">Veidot</string>
     <string name="settings_section_scan">Skenējums</string>
+    <string name="settings_torch_always_on">Lukturītis vienmēr ieslēgts</string>
     <string name="change_directory">Mainīt mapi</string>
     <string name="clear_text">Notīrīt tekstu</string>
     <string name="error_context_provider">Pakalpojuma sniedzējs: %1$s</string>

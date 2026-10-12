@@ -76,6 +76,7 @@
     <string name="settings_ocr_suggested">Meie soovitus</string>
     <string name="settings_section_ocr">Tekstituvastus</string>
     <string name="settings_section_scan">Skaneerimine</string>
+    <string name="settings_torch_always_on">Taskulamp alati sees</string>
     <string name="settings_section_export">Eksport</string>
     <string name="share">Jaga</string>
     <string name="share_document">Jaga dokumenti</string>

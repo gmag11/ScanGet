@@ -75,6 +75,7 @@
     <string name="settings_ocr_suggested">Doporučeno</string>
     <string name="settings_section_ocr">Rozpoznávání textu</string>
     <string name="settings_section_scan">Skenování</string>
+    <string name="settings_torch_always_on">Svítilna vždy zapnutá</string>
     <string name="settings_section_export">Export</string>
     <string name="share">Sdílet</string>
     <string name="share_document">Sdílet dokument</string>

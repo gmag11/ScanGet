@@ -4,7 +4,7 @@ The torch (flashlight) is off every time the camera opens and the user must turn
 
 ## What Changes
 
-- New setting in the Scan section of Settings: "Always turn on the torch when using the camera" (off by default).
+- New setting in the Scan section of Settings: "Torch always on" (off by default).
 - When enabled, the torch is on whenever the capture screen is entered.
 - The torch button on the capture screen keeps working as a toggle for the current session; turning it off there does not change the setting.
 

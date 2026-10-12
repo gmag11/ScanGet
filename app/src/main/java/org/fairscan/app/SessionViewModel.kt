@@ -22,8 +22,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.fairscan.app.data.ImageRepository
 import org.fairscan.app.data.Logger
+import org.fairscan.app.data.library.LibraryIndex
+import org.fairscan.app.data.library.LibraryLocations
 import org.fairscan.app.data.library.LibraryRepository
-import org.fairscan.app.data.library.LibraryStore
+import org.fairscan.app.data.library.LibraryStatus
+
 import org.fairscan.app.platform.ImageProcessor
 import java.io.File
 import java.util.Date
@@ -53,7 +56,8 @@ class SessionViewModel(
         logger = appContainer.logger,
         documentNamer = { appContainer.settingsRepository.defaultFilenameStyle.value.filename(Date(it)) },
         // A scan requested by another app is temporary: it is not kept in the library
-        libraryStore = if (launchMode == LaunchMode.NORMAL) appContainer.libraryStore else null,
+        libraryLocations = if (launchMode == LaunchMode.NORMAL) appContainer.libraryLocations else null,
+        libraryIndex = appContainer.libraryIndex,
     )
 
     val imageRepository: ImageRepository = sessionContainer.imageRepository
@@ -62,8 +66,15 @@ class SessionViewModel(
     val libraryRepository: LibraryRepository? = sessionContainer.libraryRepository
 
     init {
-        // A document left by a previous version (or by a crash) is added to the library right away
-        saveToLibrary()
+        // The working document is saved to the library as soon as there is one (a document left by a
+        // previous version, or by a crash, is added to it) and every time the library comes back
+        if (launchMode == LaunchMode.NORMAL) {
+            viewModelScope.launch {
+                appContainer.libraryLocations.status.collect { status ->
+                    if (status is LibraryStatus.Ready) saveToLibrary()
+                }
+            }
+        }
     }
 
     /** Saves the working document to the library now, without waiting for the autosave. */
@@ -93,7 +104,8 @@ class ScanSessionContainer(
     scope: CoroutineScope,
     logger: Logger,
     documentNamer: (Long) -> String,
-    libraryStore: LibraryStore?,
+    libraryLocations: LibraryLocations?,
+    libraryIndex: LibraryIndex,
 ) {
     private val density = context.resources.displayMetrics.density
     private val thumbnailSizePx = (THUMBNAIL_SIZE_DP * density).toInt()
@@ -106,6 +118,14 @@ class ScanSessionContainer(
         documentNamer,
     )
 
-    val libraryRepository: LibraryRepository? =
-        libraryStore?.let { LibraryRepository(it, imageRepository, scope, logger) }
+    val libraryRepository: LibraryRepository? = libraryLocations?.let { locations ->
+        LibraryRepository(
+            storeProvider = locations::currentStore,
+            imageRepository = imageRepository,
+            scope = scope,
+            logger = logger,
+            index = libraryIndex,
+            locationKey = locations::currentKey,
+        )
+    }
 }

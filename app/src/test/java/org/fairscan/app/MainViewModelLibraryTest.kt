@@ -83,7 +83,7 @@ class MainViewModelLibraryTest {
         scope = CoroutineScope(SupervisorJob())
         val logger = Logger { _, _, _ -> }
         val repository = ImageRepository(folder.newFolder(), transformations, scope, logger)
-        val library = if (withLibrary) LibraryRepository(store, repository, scope, logger) else null
+        val library = if (withLibrary) LibraryRepository({ store }, repository, scope, logger) else null
         viewModel = MainViewModel(repository, logger, library)
         return viewModel
     }
@@ -131,7 +131,7 @@ class MainViewModelLibraryTest {
         var opened = false
 
         viewModel.openDocument(firstId) { opened = true }
-        awaitUntil { opened }
+        awaitUntil { opened && viewModel.documentUiModel.value.pageCount() == 3 }
 
         assertThat(opened).isTrue()
         assertThat(viewModel.imageRepository.documentInfo().id).isEqualTo(firstId)

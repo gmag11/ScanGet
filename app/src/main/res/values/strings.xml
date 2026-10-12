@@ -37,7 +37,7 @@
     <!-- Error message (as a toast) -->
     <string name="camera_permission_denied">Camera permission was denied</string>
     <!-- Appears on the Camera screen -->
-    <string name="camera_permission_rationale">The app requires camera access to scan documents. Captured images are stored only on this device and will be deleted when you close the current scan.</string>
+    <string name="camera_permission_rationale">The app requires camera access to scan documents. Captured images are stored only on this device, in your library folder, until you delete them.</string>
     <!-- Button in dialogs -->
     <string name="cancel">Cancel</string>
     <!-- Icon description 🗁 -->
@@ -243,4 +243,50 @@
     <string name="pages_selected">%1$d selected</string>
     <string name="export_active_page">Only the current page will be exported. Long-press a page to select several.</string>
     <string name="share_separately">Share each page separately</string>
+    <!-- Library folder setup screen -->
+    <string name="library_setup_title">Where should FairScan keep your documents?</string>
+    <string name="library_setup_body">FairScan keeps the original photos and your edits, so you can edit and export your documents again at any time. They stay on your phone even if FairScan is uninstalled.</string>
+    <string name="library_setup_unavailable_title">FairScan can no longer open your folder</string>
+    <!-- %1$s: folder name -->
+    <string name="library_setup_unavailable_body">The folder \"%1$s\" is not accessible any more. Choose it again or pick another one. The document you are working on is kept.</string>
+    <string name="library_folder_recommended">Recommended</string>
+    <!-- %1$s: folder name -->
+    <string name="library_folder_default_label">Internal storage › %1$s</string>
+    <string name="library_setup_access_explanation">To create it, FairScan will ask for access to your files. It only uses its own folder.</string>
+    <!-- %1$s: folder name -->
+    <string name="library_setup_use_default">Use the %1$s folder</string>
+    <string name="library_setup_choose_other">Choose another folder</string>
+    <string name="library_setup_choose_folder">Choose a folder</string>
+    <string name="library_setup_choose_folder_hint">FairScan will only have access to the folder you choose.</string>
+    <string name="library_setup_permission_denied">Without that permission FairScan cannot create the folder. Choose an existing folder instead.</string>
+    <string name="library_folder_error">FairScan could not use that folder. Choose another one.</string>
+    <string name="library_folder_working">Setting up the folder…</string>
+    <!-- Confirmation shown when the chosen library folder is not empty. %1$s: folder name -->
+    <string name="library_confirm_title">This folder already exists</string>
+    <string name="library_confirm_not_empty">\"%1$s\" is not empty.</string>
+    <plurals name="library_confirm_documents">
+        <item quantity="one">%d FairScan document, probably from a previous installation. It will be added to your library.</item>
+        <item quantity="other">%d FairScan documents, probably from a previous installation. They will be added to your library.</item>
+    </plurals>
+    <plurals name="library_confirm_others">
+        <item quantity="one">%d other file or folder. It will be ignored and not modified.</item>
+        <item quantity="other">%d other files and folders. They will be ignored and not modified.</item>
+    </plurals>
+    <string name="library_confirm_question">Use this folder?</string>
+    <string name="library_confirm_use">Use this folder</string>
+    <string name="library_confirm_choose_another">Choose another</string>
+    <!-- Offer to move the documents when the library folder changes. %2$s: current folder, %3$s: new folder -->
+    <string name="library_move_title">Move your documents?</string>
+    <plurals name="library_move_message">
+        <item quantity="one">%1$d document is in \"%2$s\". Move it to \"%3$s\"?</item>
+        <item quantity="other">%1$d documents are in \"%2$s\". Move them to \"%3$s\"?</item>
+    </plurals>
+    <string name="library_move_yes">Move</string>
+    <string name="library_move_no">Don\'t move</string>
+    <!-- %1$d: documents moved so far, %2$d: documents to move -->
+    <string name="library_moving">Moving %1$d of %2$d…</string>
+    <string name="library_moving_not_moved">Some documents could not be moved and are still in the previous folder.</string>
+    <!-- Settings -->
+    <string name="settings_section_library">Library</string>
+    <string name="library_directory">Library folder</string>
 </resources>

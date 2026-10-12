@@ -15,9 +15,13 @@
 package org.fairscan.app.ui
 
 import org.assertj.core.api.Assertions.assertThat
+import org.fairscan.app.data.library.LibraryLocation
+import org.fairscan.app.data.library.LibraryStatus
 import org.fairscan.app.ui.Screen.Main.Camera
 import org.fairscan.app.ui.Screen.Main.Document
 import org.fairscan.app.ui.Screen.Main.Export
+import org.fairscan.app.ui.Screen.Main.LibrarySetup
+import org.fairscan.app.ui.Screen.Main.ResumeScan
 import org.fairscan.app.ui.Screen.Overlay.About
 import org.fairscan.app.ui.Screen.Overlay.Libraries
 import org.junit.Test
@@ -73,5 +77,48 @@ class NavigationTest {
         val initial = NavigationState.initial()
         assertThat(initial.current).isEqualTo(Camera)
         assertThat(initial.navigateBack().current).isEqualTo(Camera)
+    }
+
+    private val folder = LibraryLocation.Direct("/storage/emulated/0/FairScan")
+
+    @Test
+    fun the_setup_screen_comes_first_when_no_folder_is_set_up() {
+        assertThat(initialNavigationState(hasPages = false, LibraryStatus.NotSetUp).current)
+            .isEqualTo(LibrarySetup)
+        // A document in progress (from a previous version) waits for the folder
+        assertThat(initialNavigationState(hasPages = true, LibraryStatus.NotSetUp).current)
+            .isEqualTo(LibrarySetup)
+    }
+
+    @Test
+    fun the_setup_screen_comes_first_when_the_folder_is_not_accessible_any_more() {
+        assertThat(initialNavigationState(hasPages = false, LibraryStatus.Unavailable(folder)).current)
+            .isEqualTo(LibrarySetup)
+        assertThat(initialNavigationState(hasPages = true, LibraryStatus.Unavailable(folder)).current)
+            .isEqualTo(LibrarySetup)
+    }
+
+    @Test
+    fun a_usable_folder_gives_the_usual_first_screen() {
+        assertThat(initialNavigationState(hasPages = false, LibraryStatus.Ready(folder)).current)
+            .isEqualTo(Camera)
+        assertThat(initialNavigationState(hasPages = true, LibraryStatus.Ready(folder)).current)
+            .isEqualTo(ResumeScan)
+    }
+
+    @Test
+    fun without_a_library_the_setup_never_shows() {
+        // A scan requested by another app
+        assertThat(initialNavigationState(hasPages = false, library = null).current).isEqualTo(Camera)
+        assertThat(initialNavigationState(hasPages = true, library = null).current).isEqualTo(ResumeScan)
+    }
+
+    @Test
+    fun back_does_not_leave_the_setup_screen() {
+        val setup = initialNavigationState(hasPages = false, LibraryStatus.NotSetUp)
+
+        assertThat(setup.navigateBack()).isEqualTo(setup)
+        assertThat(setup.navigateTo(About).navigateBack()).isEqualTo(setup)
+        assertThat(setup.navigateTo(Camera).current).isEqualTo(Camera) // once set up, it moves on
     }
 }

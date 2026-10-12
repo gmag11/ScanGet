@@ -20,6 +20,9 @@ import android.content.ClipData
 import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
+import android.provider.Settings
+import android.provider.DocumentsContract
+import android.os.Build
 import android.content.pm.PackageManager
 import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.net.Uri
@@ -36,6 +39,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -53,6 +57,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.fairscan.app.data.FileLogger
 import org.fairscan.app.data.ImageRepository
+import org.fairscan.app.data.library.DEFAULT_LIBRARY_FOLDER_NAME
 import org.fairscan.app.ui.Navigation
 import org.fairscan.app.ui.Screen
 import org.fairscan.app.ui.components.rememberCameraPermissionState
@@ -75,6 +80,12 @@ import org.fairscan.app.ui.screens.export.ExportPageActions
 import org.fairscan.app.ui.screens.export.ExportScreenWrapper
 import org.fairscan.app.ui.screens.export.ExportViewModel
 import org.fairscan.app.ui.screens.settings.OcrLanguagesScreen
+import org.fairscan.app.ui.screens.setup.LibrarySetupScreen
+import org.fairscan.app.ui.screens.setup.LibraryFolderViewModel
+import org.fairscan.app.ui.screens.setup.LibraryFolderUiState
+import org.fairscan.app.ui.screens.setup.LibraryFolderEvent
+import org.fairscan.app.ui.screens.setup.LibraryFolderDialogs
+import org.fairscan.app.ui.screens.settings.LibraryFolderSetting
 import org.fairscan.app.ui.screens.settings.SettingsScreen
 import org.fairscan.app.ui.screens.settings.SettingsUiState
 import org.fairscan.app.ui.screens.settings.SettingsViewModel
@@ -107,9 +118,27 @@ class MainActivity : ComponentActivity() {
         lifecycle.addObserver(LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) sessionViewModel.saveToLibrary()
         })
+        if (launchMode == LaunchMode.NORMAL) {
+            // The library folder may have become (or stopped being) accessible while the app was away
+            lifecycle.addObserver(LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_START) {
+                    lifecycleScope.launch(Dispatchers.IO) { appContainer.libraryLocations.refresh() }
+                }
+            })
+        }
+        val libraryFolderViewModel: LibraryFolderViewModel by viewModels {
+            appContainer.viewModelFactory {
+                LibraryFolderViewModel(
+                    it.libraryLocations, BuildConfig.ALL_FILES_ACCESS_AVAILABLE, it.logger)
+            }
+        }
         viewModel = viewModels<MainViewModel> {
             appContainer.viewModelFactory {
-                MainViewModel(imageRepository, appContainer.logger, sessionViewModel.libraryRepository)
+                MainViewModel(
+                    imageRepository, appContainer.logger, sessionViewModel.libraryRepository,
+                    // A scan requested by another app has no library to set up
+                    libraryStatus = if (launchMode == LaunchMode.NORMAL) appContainer.libraryLocations.status else null,
+                )
             }
         }.value
         val exportViewModel: ExportViewModel by viewModels {
@@ -142,12 +171,16 @@ class MainActivity : ComponentActivity() {
             val cropInitialState by viewModel.cropInitState.collectAsStateWithLifecycle()
             val exportUiState by exportViewModel.uiState.collectAsStateWithLifecycle()
             val settingsUiState by settingsViewModel.uiState.collectAsStateWithLifecycle()
+            val libraryFolderState by libraryFolderViewModel.uiState.collectAsStateWithLifecycle()
             val cameraPermission = rememberCameraPermissionState()
             CollectCameraEvents(cameraViewModel, viewModel)
             CollectExportEvents(context, exportViewModel)
             CollectAboutEvents(context, aboutViewModel, imageRepository)
 
             FairScanTheme {
+                if (launchMode == LaunchMode.NORMAL) {
+                    LibraryFolderHandling(libraryFolderViewModel, libraryFolderState)
+                }
                 val navigation = navigation(viewModel, launchMode)
                 val onExportClick = if (launchMode == LaunchMode.EXTERNAL_SCAN_TO_PDF) {
                     {
@@ -182,6 +215,14 @@ class MainActivity : ComponentActivity() {
                                 viewModel.startNewDocument()
                                 navigation.toCameraScreen()
                             }
+                        )
+                    }
+                    is Screen.Main.LibrarySetup -> {
+                        LibrarySetupScreen(
+                            uiState = libraryFolderState,
+                            navigation = navigation,
+                            onUseDefaultFolder = libraryFolderViewModel::onUseDefaultFolder,
+                            onChooseFolder = libraryFolderViewModel::onChooseFolder,
                         )
                     }
                     is Screen.Main.Camera -> {
@@ -288,7 +329,7 @@ class MainActivity : ComponentActivity() {
                         LibrariesScreen(onBack = navigation.back)
                     }
                     is Screen.Overlay.Settings -> {
-                        SettingsScreenWrapper(settingsUiState, settingsViewModel, navigation, logger)
+                        SettingsScreenWrapper(settingsUiState, settingsViewModel, libraryFolderViewModel, libraryFolderState, navigation, logger)
                     }
                     is Screen.Overlay.OcrLanguages -> {
                         OcrLanguagesScreen(
@@ -303,6 +344,81 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    /**
+     * What the library folder flow needs from Android: the system folder picker, the system screen
+     * where "All files access" is granted, and the dialogs. It reacts to the events of [viewModel].
+     */
+    @Composable
+    private fun LibraryFolderHandling(viewModel: LibraryFolderViewModel, uiState: LibraryFolderUiState) {
+        val logger = (application as FairScanApp).appContainer.logger
+        val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri != null) {
+                try {
+                    contentResolver.takePersistableUriPermission(uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                    viewModel.onFolderPicked(uri.toString())
+                } catch (e: Exception) {
+                    logger.e("LibraryFolder", "Failed to get access to $uri", e)
+                    showToast(getString(R.string.error_file_picker_result))
+                }
+            }
+        }
+        val allFilesAccessScreen = rememberLauncherForActivityResult(
+            ActivityResultContracts.StartActivityForResult()) { viewModel.onAllFilesAccessResult() }
+        val writePermission = rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestPermission()) { viewModel.onAllFilesAccessResult() }
+
+        LaunchedEffect(Unit) {
+            viewModel.events.collect { event ->
+                when (event) {
+                    LibraryFolderEvent.RequestAllFilesAccess -> {
+                        try {
+                            if (SDK_INT >= Build.VERSION_CODES.R) {
+                                allFilesAccessScreen.launch(allFilesAccessIntent())
+                            } else {
+                                writePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                            }
+                        } catch (e: Exception) {
+                            logger.e("LibraryFolder", "Cannot ask for all files access", e)
+                            viewModel.onAllFilesAccessResult()
+                        }
+                    }
+                    is LibraryFolderEvent.PickFolder -> {
+                        try {
+                            pickFolder.launch(pickerInitialUri(event.defaultFolderExists))
+                        } catch (e: Exception) {
+                            val message = getString(R.string.error_file_picker_launch)
+                            logger.e("LibraryFolder", message, e)
+                            showToast(message)
+                        }
+                    }
+                }
+            }
+        }
+        LibraryFolderDialogs(
+            uiState,
+            onConfirmFolder = viewModel::onConfirmFolder,
+            onChooseAnother = viewModel::onChooseAnother,
+            onMoveAnswer = viewModel::onMoveAnswer,
+            onDismissNotMoved = viewModel::onDismissNotMoved,
+        )
+    }
+
+    @RequiresApi(Build.VERSION_CODES.R)
+    private fun allFilesAccessIntent(): Intent {
+        val appIntent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+            Uri.fromParts("package", packageName, null))
+        // A few devices only have the screen listing every app
+        return if (appIntent.resolveActivity(packageManager) != null) appIntent
+        else Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+    }
+
+    /** The picker starts in the FairScan folder if it exists, so that it only has to be confirmed. */
+    private fun pickerInitialUri(defaultFolderExists: Boolean): Uri =
+        DocumentsContract.buildDocumentUri(
+            "com.android.externalstorage.documents",
+            if (defaultFolderExists) "primary:$DEFAULT_LIBRARY_FOLDER_NAME" else "primary:")
 
     private fun resolveLaunchMode(intent: Intent?): LaunchMode {
         return when (intent?.action) {
@@ -320,6 +436,8 @@ class MainActivity : ComponentActivity() {
     private fun SettingsScreenWrapper(
         settingsUiState: SettingsUiState,
         settingsViewModel: SettingsViewModel,
+        libraryFolderViewModel: LibraryFolderViewModel,
+        libraryFolderState: LibraryFolderUiState,
         nav: Navigation,
         logger: FileLogger,
     ) {
@@ -359,6 +477,13 @@ class MainActivity : ComponentActivity() {
             onExportQualityChanged = { quality -> settingsViewModel.setExportQuality(quality) },
             onDefaultFileNameStyleChanged = settingsViewModel::setDefaultFilenameStyle,
             navigation = nav,
+            library = LibraryFolderSetting(
+                status = libraryFolderState.status,
+                canUseDefaultFolder = libraryFolderState.allFilesAccessOffered,
+                defaultFolderName = libraryFolderState.defaultFolderName,
+                onChooseFolderClick = libraryFolderViewModel::onChooseFolder,
+                onUseDefaultFolderClick = libraryFolderViewModel::onUseDefaultFolder,
+            ),
         )
     }
 

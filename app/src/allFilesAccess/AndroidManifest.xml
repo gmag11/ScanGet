@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- To create the library folder (FairScan) at the root of the user's storage on Android 11+.
+         Added to the build types by app/build.gradle.kts, except with -Pfairscan.noAllFilesAccess -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+</manifest>

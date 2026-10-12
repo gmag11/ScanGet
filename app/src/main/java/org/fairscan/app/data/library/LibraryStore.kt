@@ -23,6 +23,16 @@ data class LibraryEntry(
     val pageCount: Int,
 )
 
+/** What a library location holds, as found by [LibraryStore.inspect]. */
+data class FolderInspection(
+    /** Recognized FairScan documents, probably from a previous installation. */
+    val fairScanDocuments: Int,
+    /** Everything else: files and folders that are not FairScan's and are never touched. */
+    val otherItems: Int,
+) {
+    val isEmpty get() = fairScanDocuments == 0 && otherItems == 0
+}
+
 /**
  * Where the documents of the library are kept: one entry per document, identified by its id.
  *
@@ -34,6 +44,9 @@ interface LibraryStore {
 
     /** The recognized documents. */
     fun list(): List<LibraryEntry>
+
+    /** Counts what the location holds, without writing anything. */
+    fun inspect(): FolderInspection
 
     /** Description of the document, or null if there is no recognized document with this id. */
     fun readMetadata(id: String): DocumentMetadataV3?

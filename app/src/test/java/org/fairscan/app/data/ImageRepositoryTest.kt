@@ -746,6 +746,7 @@ class ImageRepositoryTest {
         }
 
         expectOneMore { repo.add(jpeg(1), jpeg(2), metadata1, COLOR) }
+        Thread.sleep(2) // page ids are the time in milliseconds: they must differ
         expectOneMore { repo.add(jpeg(3), jpeg(4), metadata1, COLOR) }
         val ids = repo.imageIds()
         expectOneMore { repo.rotate(ids[0], clockwise = true) }

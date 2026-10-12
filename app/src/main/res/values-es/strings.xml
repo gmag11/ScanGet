@@ -6,7 +6,7 @@
     <string name="back">Atrás</string>
     <string name="black_and_white_jpeg_hint">Las páginas en blanco y negro serían más pequeñas y nítidas si se exportaran como PDF.</string>
     <string name="camera_permission_denied">Permiso de cámara denegado</string>
-    <string name="camera_permission_rationale">La aplicación necesita acceso a la cámara para escanear documentos. Las imágenes capturadas se guardan solo en este dispositivo y se eliminarán cuando cierres el escaneo actual.</string>
+    <string name="camera_permission_rationale">La aplicación necesita acceso a la cámara para escanear documentos. Las imágenes capturadas se guardan solo en este dispositivo, en la carpeta de tu biblioteca, hasta que las elimines.</string>
     <string name="cancel">Cancelar</string>
     <string name="change_directory">Cambiar carpeta</string>
     <string name="clear_text">Borrar texto</string>
@@ -122,4 +122,43 @@
     <string name="pages_selected">%1$d seleccionadas</string>
     <string name="export_active_page">Solo se exportará la página actual. Mantén pulsada una página para seleccionar varias.</string>
     <string name="share_separately">Compartir cada página por separado</string>
+    <!-- Library folder setup screen -->
+    <string name="library_setup_title">¿Dónde debe guardar FairScan tus documentos?</string>
+    <string name="library_setup_body">FairScan guarda las fotos originales y tus ediciones, para que puedas editar y exportar tus documentos de nuevo en cualquier momento. Se quedan en tu teléfono aunque desinstales FairScan.</string>
+    <string name="library_setup_unavailable_title">FairScan ya no puede abrir tu carpeta</string>
+    <string name="library_setup_unavailable_body">La carpeta \"%1$s\" ya no es accesible. Elígela de nuevo o escoge otra. El documento en el que trabajas se conserva.</string>
+    <string name="library_folder_recommended">Recomendada</string>
+    <string name="library_folder_default_label">Almacenamiento interno › %1$s</string>
+    <string name="library_setup_access_explanation">Para crearla, FairScan pedirá acceso a tus archivos. Solo usa su propia carpeta.</string>
+    <string name="library_setup_use_default">Usar la carpeta %1$s</string>
+    <string name="library_setup_choose_other">Elegir otra carpeta</string>
+    <string name="library_setup_choose_folder">Elegir una carpeta</string>
+    <string name="library_setup_choose_folder_hint">FairScan solo tendrá acceso a la carpeta que elijas.</string>
+    <string name="library_setup_permission_denied">Sin ese permiso FairScan no puede crear la carpeta. Elige una carpeta existente.</string>
+    <string name="library_folder_error">FairScan no ha podido usar esa carpeta. Elige otra.</string>
+    <string name="library_folder_working">Preparando la carpeta…</string>
+    <string name="library_confirm_title">Esta carpeta ya existe</string>
+    <string name="library_confirm_not_empty">\"%1$s\" no está vacía.</string>
+    <plurals name="library_confirm_documents">
+        <item quantity="one">%d documento de FairScan, probablemente de una instalación anterior. Se añadirá a tu biblioteca.</item>
+        <item quantity="other">%d documentos de FairScan, probablemente de una instalación anterior. Se añadirán a tu biblioteca.</item>
+    </plurals>
+    <plurals name="library_confirm_others">
+        <item quantity="one">%d archivo o carpeta más. Se ignorará y no se modificará.</item>
+        <item quantity="other">%d archivos y carpetas más. Se ignorarán y no se modificarán.</item>
+    </plurals>
+    <string name="library_confirm_question">¿Usar esta carpeta?</string>
+    <string name="library_confirm_use">Usar esta carpeta</string>
+    <string name="library_confirm_choose_another">Elegir otra</string>
+    <string name="library_move_title">¿Mover tus documentos?</string>
+    <plurals name="library_move_message">
+        <item quantity="one">%1$d documento está en \"%2$s\". ¿Moverlo a \"%3$s\"?</item>
+        <item quantity="other">%1$d documentos están en \"%2$s\". ¿Moverlos a \"%3$s\"?</item>
+    </plurals>
+    <string name="library_move_yes">Mover</string>
+    <string name="library_move_no">No mover</string>
+    <string name="library_moving">Moviendo %1$d de %2$d…</string>
+    <string name="library_moving_not_moved">Algunos documentos no se han podido mover y siguen en la carpeta anterior.</string>
+    <string name="settings_section_library">Biblioteca</string>
+    <string name="library_directory">Carpeta de la biblioteca</string>
 </resources>

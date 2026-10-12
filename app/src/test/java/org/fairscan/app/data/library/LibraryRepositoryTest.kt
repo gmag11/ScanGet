@@ -75,11 +75,15 @@ class LibraryRepositoryTest {
 
     private class Session(val images: ImageRepository, val library: LibraryRepository, val dir: File)
 
+    // What the library uses as its store; null while the library is not available
+    private var currentStore: LibraryStore? = null
+
     private fun TestScope.session(name: String, debounce: Long = 500): Session {
+        currentStore = store
         val dir = folder.newFolder(name)
         val images = ImageRepository(dir, transformations, backgroundScope, Logger { _, _, _ -> },
             documentNamer = { "Scan $it" }, clock = { clockValue })
-        val library = LibraryRepository(store, images, backgroundScope, Logger { _, _, _ -> },
+        val library = LibraryRepository({ currentStore }, images, backgroundScope, Logger { _, _, _ -> },
             debounceMillis = debounce, clock = { clockValue },
             ioDispatcher = StandardTestDispatcher(testScheduler))
         runCurrent() // lets the autosave subscribe
@@ -335,7 +339,7 @@ class LibraryRepositoryTest {
                     PageV2("111", colorMode = COLOR, isColored = true, quad = quad.toSerializable())))))
         val images = ImageRepository(dir, transformations, backgroundScope, Logger { _, _, _ -> },
             documentNamer = { "Scan $it" }, clock = { clockValue })
-        val library = LibraryRepository(store, images, backgroundScope, Logger { _, _, _ -> },
+        val library = LibraryRepository({ store }, images, backgroundScope, Logger { _, _, _ -> },
             ioDispatcher = StandardTestDispatcher(testScheduler))
         runCurrent()
         assertThat(store.list()).isEmpty() // nothing is saved until the library is available
@@ -362,7 +366,7 @@ class LibraryRepositoryTest {
         File(libraryDir, "taken").apply { mkdirs(); File(this, "holiday.jpg").writeText("mine") }
         val images = ImageRepository(dir, transformations, backgroundScope, Logger { _, _, _ -> },
             clock = { clockValue })
-        val library = LibraryRepository(store, images, backgroundScope, Logger { _, _, _ -> },
+        val library = LibraryRepository({ store }, images, backgroundScope, Logger { _, _, _ -> },
             ioDispatcher = StandardTestDispatcher(testScheduler))
         runCurrent()
 
@@ -372,5 +376,150 @@ class LibraryRepositoryTest {
         assertThat(id).isNotEqualTo("taken")
         assertThat(store.readMetadata(id)).isNotNull()
         assertThat(File(libraryDir, "taken").list()!!.toList()).containsExactly("holiday.jpg")
+    }
+
+    // --- The library is not always available ---
+
+    @Test
+    fun `nothing is written while the library is not available and everything is when it comes back`() = runTest {
+        val s = session("work")
+        s.addPage(1); s.addPage(2)
+        s.library.flush()
+        val id = s.images.documentInfo().id
+        val pageIds = s.images.pages().map { it.id }
+
+        // The folder is lost; the user keeps editing
+        currentStore = null
+        s.images.rotate(pageIds[0], clockwise = true)
+        s.addPage(3)
+        s.library.flush()
+        advanceTimeBy(1_000); runCurrent()
+        assertThat(store.readMetadata(id)!!.pages).hasSize(2) // the library knows nothing of the edits
+        assertThat(s.library.documents()).isEmpty()
+
+        // It is back, perhaps another folder: the document is written in full
+        currentStore = store
+        s.library.flush()
+
+        val saved = store.readMetadata(id)!!
+        assertThat(saved.pages).hasSize(3)
+        assertThat(saved.pages[0].manualRotationDegrees).isEqualTo(90)
+        assertThat(store.sourceIds(id)).hasSize(3)
+    }
+
+    @Test
+    fun `the working document is written in full to a new library location`() = runTest {
+        val s = session("work")
+        s.addPage(1); s.addPage(2)
+        s.library.flush()
+        val id = s.images.documentInfo().id
+        val other = FileLibraryStore(folder.newFolder("other-library"))
+
+        currentStore = other
+        s.library.flush()
+
+        assertThat(other.readMetadata(id)!!.pages).hasSize(2)
+        assertThat(other.sourceIds(id)).hasSize(2)
+        assertThat(other.readCover(id)).isNotNull()
+    }
+
+    @Test
+    fun `a document in progress before the library existed is saved once there is one`() = runTest {
+        currentStore = null
+        val dir = folder.newFolder("work")
+        val images = ImageRepository(dir, transformations, backgroundScope, Logger { _, _, _ -> },
+            documentNamer = { "Scan $it" }, clock = { clockValue })
+        val library = LibraryRepository({ currentStore }, images, backgroundScope, Logger { _, _, _ -> },
+            ioDispatcher = StandardTestDispatcher(testScheduler))
+        runCurrent()
+        images.add(Jpeg(byteArrayOf(1, 5)), Jpeg(byteArrayOf(1)), metadata, COLOR)
+        library.flush()
+        assertThat(store.list()).isEmpty()
+        val before = images.snapshot()
+
+        currentStore = store // the user has chosen the folder
+        library.flush()
+
+        assertThat(store.readMetadata(before.id)!!.pages.map { it.id }).containsExactlyElementsOf(before.pages.map { it.id })
+        assertThat(store.readSource(before.id, before.pages[0].id)).isEqualTo(byteArrayOf(1))
+    }
+
+    @Test
+    fun `a new document cannot replace one that cannot be saved`() = runTest {
+        val s = session("work")
+        s.addPage()
+        currentStore = null
+
+        assertThat(s.library.canStartNewDocument()).isFalse()
+        assertThat(runCatching { s.library.startNewDocument() }.exceptionOrNull())
+            .isInstanceOf(LibraryUnavailableException::class.java)
+        assertThat(s.images.pages()).hasSize(1) // untouched
+    }
+
+    @Test
+    fun `an empty document can be replaced even without a library`() = runTest {
+        val s = session("work")
+        currentStore = null
+
+        assertThat(s.library.canStartNewDocument()).isTrue()
+        s.library.startNewDocument()
+    }
+
+    @Test
+    fun `listing and opening do nothing without a library`() = runTest {
+        val s = session("work")
+        s.addPage()
+        s.library.flush()
+        val id = s.images.documentInfo().id
+        currentStore = null
+
+        assertThat(s.library.documents()).isEmpty()
+        assertThat(s.library.open(id)).isFalse()
+        assertThat(s.library.cover(id)).isNull()
+    }
+
+    // --- Cached list of documents ---
+
+    @Test
+    fun `the list of documents is cached for the next start and rebuilt when the cache is lost`() = runTest {
+        val indexFile = File(folder.newFolder("index"), "library-index.json")
+        val index = LibraryIndex(indexFile)
+        currentStore = store
+        val images = ImageRepository(folder.newFolder("work"), transformations, backgroundScope,
+            Logger { _, _, _ -> }, documentNamer = { "Scan $it" }, clock = { clockValue })
+        val library = LibraryRepository({ currentStore }, images, backgroundScope, Logger { _, _, _ -> },
+            ioDispatcher = StandardTestDispatcher(testScheduler), index = index, locationKey = { "here" })
+        runCurrent()
+        images.add(Jpeg(byteArrayOf(1, 5)), Jpeg(byteArrayOf(1)), metadata, COLOR)
+        assertThat(library.cachedDocuments()).isEmpty()
+
+        val listed = library.documents()
+
+        assertThat(library.cachedDocuments()).isEqualTo(listed)
+        assertThat(listed).hasSize(1)
+
+        indexFile.delete()
+        assertThat(library.cachedDocuments()).isEmpty()
+        library.documents()
+        assertThat(library.cachedDocuments()).isEqualTo(listed)
+    }
+
+    @Test
+    fun `the cached list of another location is not shown`() = runTest {
+        val index = LibraryIndex(File(folder.newFolder("index"), "library-index.json"))
+        var key = "folder-a"
+        val images = ImageRepository(folder.newFolder("work"), transformations, backgroundScope,
+            Logger { _, _, _ -> }, documentNamer = { "Scan $it" }, clock = { clockValue })
+        currentStore = store
+        val library = LibraryRepository({ currentStore }, images, backgroundScope, Logger { _, _, _ -> },
+            ioDispatcher = StandardTestDispatcher(testScheduler), index = index, locationKey = { key })
+        runCurrent()
+        images.add(Jpeg(byteArrayOf(1, 5)), Jpeg(byteArrayOf(1)), metadata, COLOR)
+        library.documents()
+        assertThat(library.cachedDocuments()).hasSize(1)
+
+        key = "folder-b"
+
+        assertThat(library.cachedDocuments()).isEmpty()
     }
 }

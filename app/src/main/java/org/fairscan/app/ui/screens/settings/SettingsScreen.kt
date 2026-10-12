@@ -65,7 +65,19 @@ import org.fairscan.app.domain.ExportQuality
 import org.fairscan.app.ui.Navigation
 import org.fairscan.app.ui.components.BackButton
 import org.fairscan.app.ui.dummyNavigation
+import org.fairscan.app.data.library.LibraryLocation
+import org.fairscan.app.data.library.LibraryStatus
 import org.fairscan.app.ui.theme.FairScanTheme
+
+/** What the settings show and can do about the folder where the library is kept. */
+data class LibraryFolderSetting(
+    val status: LibraryStatus?,
+    /** The `FairScan` folder can be proposed (it is created with "All files access"). */
+    val canUseDefaultFolder: Boolean,
+    val defaultFolderName: String,
+    val onChooseFolderClick: () -> Unit,
+    val onUseDefaultFolderClick: () -> Unit,
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,6 +91,7 @@ fun SettingsScreen(
     onExportQualityChanged: (ExportQuality) -> Unit,
     onDefaultFileNameStyleChanged: (DefaultFilenameStyle) -> Unit,
     navigation: Navigation,
+    library: LibraryFolderSetting? = null,
 ) {
     BackHandler { navigation.back() }
     Scaffold(
@@ -99,6 +112,7 @@ fun SettingsScreen(
             onExportQualityChanged,
             onDefaultFileNameStyleChanged,
             navigation,
+            library,
             modifier = Modifier.padding(paddingValues),
         )
     }
@@ -115,6 +129,7 @@ private fun SettingsContent(
     onExportQualityChanged: (ExportQuality) -> Unit,
     onDefaultFileNameStyleChanged: (DefaultFilenameStyle) -> Unit,
     navigation: Navigation,
+    library: LibraryFolderSetting?,
     modifier: Modifier = Modifier,
 ) {
     val displayLocale = Locale.current.platformLocale
@@ -169,6 +184,13 @@ private fun SettingsContent(
         Spacer(Modifier.height(16.dp))
         HorizontalDivider()
         Spacer(Modifier.height(16.dp))
+
+        if (library != null) {
+            LibraryFolderSection(library)
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+        }
 
         Text(stringResource(R.string.settings_section_export), style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(16.dp))
@@ -316,6 +338,35 @@ fun <T> SingleChoiceSetting(
 }
 
 @Composable
+private fun LibraryFolderSection(library: LibraryFolderSetting) {
+    Text(stringResource(R.string.settings_section_library), style = MaterialTheme.typography.titleLarge)
+    Spacer(Modifier.height(16.dp))
+
+    val (folderLabel, folderLabelColor) = when (val status = library.status) {
+        is LibraryStatus.Ready ->
+            status.location.displayName to MaterialTheme.colorScheme.onSurface
+        is LibraryStatus.Unavailable ->
+            stringResource(R.string.export_folder_permission_lost) to MaterialTheme.colorScheme.error
+        else -> "" to MaterialTheme.colorScheme.onSurface
+    }
+    DirectorySettingItem(
+        label = stringResource(R.string.library_directory),
+        folderLabel,
+        folderLabelColor,
+        onClick = library.onChooseFolderClick,
+    )
+    val usingDefault = (library.status as? LibraryStatus.Ready)?.location is LibraryLocation.Direct
+    if (library.canUseDefaultFolder && !usingDefault) {
+        TextButton(
+            onClick = library.onUseDefaultFolderClick,
+            modifier = Modifier.padding(start = 4.dp),
+        ) {
+            Text(stringResource(R.string.library_setup_use_default, library.defaultFolderName))
+        }
+    }
+}
+
+@Composable
 fun DirectorySettingItem(
     label: String,
     folderLabel: String,
@@ -373,6 +424,28 @@ fun SettingsScreenPreviewWithoutDir() {
     ))
 }
 
+@Preview(heightDp = 900)
+@Composable
+fun SettingsScreenPreviewWithLibraryFolder() {
+    SettingsScreenPreview(
+        SettingsUiState(),
+        LibraryFolderSetting(
+            LibraryStatus.Ready(LibraryLocation.Saf("content://root/Scans", "Scans")),
+            canUseDefaultFolder = true, defaultFolderName = "FairScan", {}, {}),
+    )
+}
+
+@Preview(heightDp = 900)
+@Composable
+fun SettingsScreenPreviewWithLibraryFolderLost() {
+    SettingsScreenPreview(
+        SettingsUiState(),
+        LibraryFolderSetting(
+            LibraryStatus.Unavailable(LibraryLocation.Direct("/storage/emulated/0/FairScan")),
+            canUseDefaultFolder = true, defaultFolderName = "FairScan", {}, {}),
+    )
+}
+
 @Preview
 @Composable
 fun SettingsScreenPreviewWithDir() {
@@ -382,7 +455,7 @@ fun SettingsScreenPreviewWithDir() {
 }
 
 @Composable
-fun SettingsScreenPreview(uiState: SettingsUiState) {
+fun SettingsScreenPreview(uiState: SettingsUiState, library: LibraryFolderSetting? = null) {
     FairScanTheme {
         SettingsScreen(
             uiState,
@@ -394,6 +467,7 @@ fun SettingsScreenPreview(uiState: SettingsUiState) {
             onExportQualityChanged = {},
             onDefaultFileNameStyleChanged = {},
             navigation = dummyNavigation(),
+            library = library,
         )
     }
 }

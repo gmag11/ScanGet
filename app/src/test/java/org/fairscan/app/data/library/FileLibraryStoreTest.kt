@@ -191,4 +191,69 @@ class FileLibraryStoreTest {
         assertThat(File(root, "photos/a.jpg")).exists()
         assertThat(File(root, "photos/sources/1.jpg")).exists()
     }
+
+    @Test
+    fun `the entry is hidden from galleries before its first capture is written`() {
+        store.writeSource("d1", "100", byteArrayOf(1))
+
+        assertThat(File(root, "d1/.nomedia")).exists()
+        assertThat(File(root, "d1/sources/100.jpg")).exists()
+        assertThat(store.isForeign("d1")).isFalse() // still a document being written
+    }
+
+    @Test
+    fun `an empty location has nothing in it`() {
+        assertThat(store.inspect()).isEqualTo(FolderInspection(0, 0))
+        assertThat(store.inspect().isEmpty).isTrue()
+    }
+
+    @Test
+    fun `a location with a previous installation counts its documents`() {
+        store.writeMetadata(metadata("d1"))
+        store.writeMetadata(metadata("d2"))
+        store.writeMetadata(metadata("d3"))
+
+        assertThat(store.inspect()).isEqualTo(FolderInspection(fairScanDocuments = 3, otherItems = 0))
+        assertThat(store.inspect().isEmpty).isFalse()
+    }
+
+    @Test
+    fun `a location with other content counts it apart`() {
+        File(root, "photos").apply { mkdirs(); File(this, "a.jpg").writeText("x") }
+        File(root, "notes.txt").writeText("hello")
+        File(root, "broken").apply { mkdirs(); File(this, "document.json").writeText("{not json") }
+
+        assertThat(store.inspect()).isEqualTo(FolderInspection(fairScanDocuments = 0, otherItems = 3))
+    }
+
+    @Test
+    fun `a mixed location counts both`() {
+        store.writeMetadata(metadata("d1"))
+        store.writeMetadata(metadata("d2"))
+        File(root, "photos").mkdirs()
+        File(root, "readme.txt").writeText("x")
+
+        assertThat(store.inspect()).isEqualTo(FolderInspection(fairScanDocuments = 2, otherItems = 2))
+    }
+
+    @Test
+    fun `inspecting writes nothing`() {
+        File(root, "photos").mkdirs()
+        val before = root.walkTopDown().map { it.relativeTo(root).path }.sorted().toList()
+
+        store.inspect()
+        store.list()
+
+        assertThat(root.walkTopDown().map { it.relativeTo(root).path }.sorted().toList()).isEqualTo(before)
+    }
+
+    @Test
+    fun `a description that is only in its temporary file is still read`() {
+        store.writeMetadata(metadata("d1", "Invoice"))
+        // As left by a provider that removed the old description and was interrupted before renaming
+        File(root, "d1/document.json").renameTo(File(root, "d1/document.json.tmp"))
+
+        assertThat(store.readMetadata("d1")!!.name).isEqualTo("Invoice")
+        assertThat(store.list().map { it.info.id }).containsExactly("d1")
+    }
 }

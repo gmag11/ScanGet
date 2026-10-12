@@ -25,10 +25,13 @@ import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import org.fairscan.app.R
+import org.fairscan.app.data.library.LibraryLocationSettings
+import org.fairscan.app.data.library.StoredLibraryLocation
 import org.fairscan.app.domain.ExportQuality
 import org.fairscan.imageprocessing.ColorMode
 import java.text.SimpleDateFormat
@@ -39,7 +42,7 @@ class SettingsRepository(
     private val context: Context,
     private val dataStore: DataStore<Preferences>,
     private val scope: CoroutineScope,
-) {
+) : LibraryLocationSettings {
 
     private val DEFAULT_COLOR_MODE = stringPreferencesKey("default_color_mode")
     private val DEFAULT_FILENAME_STYLE = stringPreferencesKey("default_filename_style")
@@ -47,6 +50,9 @@ class SettingsRepository(
     private val EXPORT_FORMAT = stringPreferencesKey("export_format")
     private val EXPORT_QUALITY = stringPreferencesKey("export_quality")
     private val TORCH_ALWAYS_ON = booleanPreferencesKey("torch_always_on")
+    private val LIBRARY_LOCATION_KIND = stringPreferencesKey("library_location_kind")
+    private val LIBRARY_LOCATION = stringPreferencesKey("library_location")
+    private val LIBRARY_LOCATION_NAME = stringPreferencesKey("library_location_name")
 
     val defaultColorMode: Flow<DefaultColorMode> =
         dataStore.data.map { prefs -> parseDefaultColorMode(prefs[DEFAULT_COLOR_MODE]) }
@@ -115,6 +121,32 @@ class SettingsRepository(
                 prefs.remove(EXPORT_DIR_URI)
             } else {
                 prefs[EXPORT_DIR_URI] = uri
+            }
+        }
+    }
+
+    /** The library location chosen by the user, or null if there is none yet. */
+    override suspend fun load(): StoredLibraryLocation? =
+        dataStore.data.first().let { prefs ->
+            val kind = when (prefs[LIBRARY_LOCATION_KIND]) {
+                "DIRECT" -> StoredLibraryLocation.Kind.DIRECT
+                "SAF" -> StoredLibraryLocation.Kind.SAF
+                else -> return@let null
+            }
+            prefs[LIBRARY_LOCATION]?.let { StoredLibraryLocation(kind, it, prefs[LIBRARY_LOCATION_NAME]) }
+        }
+
+    override suspend fun save(location: StoredLibraryLocation?) {
+        dataStore.edit { prefs ->
+            if (location == null) {
+                prefs.remove(LIBRARY_LOCATION_KIND)
+                prefs.remove(LIBRARY_LOCATION)
+                prefs.remove(LIBRARY_LOCATION_NAME)
+            } else {
+                prefs[LIBRARY_LOCATION_KIND] = location.kind.name
+                prefs[LIBRARY_LOCATION] = location.value
+                if (location.name != null) prefs[LIBRARY_LOCATION_NAME] = location.name
+                else prefs.remove(LIBRARY_LOCATION_NAME)
             }
         }
     }

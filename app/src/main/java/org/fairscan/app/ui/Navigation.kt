@@ -14,6 +14,8 @@
  */
 package org.fairscan.app.ui
 
+import org.fairscan.app.data.library.LibraryStatus
+
 sealed class Screen {
     sealed class Main : Screen() {
         object Camera : Main()
@@ -21,6 +23,8 @@ sealed class Screen {
         data class Document(val initialPage: Int = 0) : Main()
         object Export : Main()
         object ResumeScan : Main()
+        /** Asks where the library is kept, until there is a folder to keep it in. */
+        object LibrarySetup : Main()
     }
     sealed class Overlay : Screen() {
         object About : Overlay()
@@ -67,6 +71,7 @@ data class NavigationState private constructor(val stack: List<Screen>, val root
         return when (current) {
             root -> this // Back handled by system
             is Screen.Main.ResumeScan -> this // Back handled by system
+            is Screen.Main.LibrarySetup -> this // Back handled by system
             is Screen.Main.Camera -> this // Back handled by system
             is Screen.Main.Document -> copy(stack = listOf(Screen.Main.Camera))
             is Screen.Main.EditImage -> copy(stack = listOf(Screen.Main.Document()))
@@ -75,3 +80,17 @@ data class NavigationState private constructor(val stack: List<Screen>, val root
         }
     }
 }
+
+/**
+ * The first screen of the app. [library] is the state of the library location, or null when there is
+ * no library (a scan requested by another app): then the library is not involved at all.
+ * Without a usable library folder the setup screen comes first; the working document, if any, is
+ * kept for when the folder is chosen.
+ */
+fun initialNavigationState(hasPages: Boolean, library: LibraryStatus?): NavigationState =
+    when {
+        library is LibraryStatus.NotSetUp || library is LibraryStatus.Unavailable ->
+            NavigationState.initial().navigateTo(Screen.Main.LibrarySetup)
+        hasPages -> NavigationState.initial().navigateTo(Screen.Main.ResumeScan)
+        else -> NavigationState.initial()
+    }

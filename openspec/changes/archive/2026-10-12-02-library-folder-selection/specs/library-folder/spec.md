@@ -1,3 +1,7 @@
+## Purpose
+
+Lets the user choose where the document library is kept, a visible folder of their storage (`FairScan` by default) and never the app's private storage, reuses the documents a previous installation left there, and leaves any other content of that folder untouched.
+
 ## ADDED Requirements
 
 ### Requirement: Library outside the app's private storage

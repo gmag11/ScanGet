@@ -30,6 +30,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
@@ -40,11 +42,13 @@ import kotlinx.coroutines.withContext
 import org.fairscan.app.data.ImageRepository
 import org.fairscan.app.data.Logger
 import org.fairscan.app.data.library.LibraryRepository
+import org.fairscan.app.data.library.LibraryStatus
 import org.fairscan.app.domain.CapturedPage
 import org.fairscan.app.domain.Rotation
 import org.fairscan.app.domain.ScanPage
 import org.fairscan.app.platform.PreviewRenderer
 import org.fairscan.app.ui.NavigationState
+import org.fairscan.app.ui.initialNavigationState
 import org.fairscan.app.ui.Screen
 import org.fairscan.app.ui.screens.crop.CropInitState
 import org.fairscan.app.ui.screens.document.CurrentPageUiState
@@ -66,6 +70,8 @@ class MainViewModel(
     private val logger: Logger,
     // Where documents are kept; null when they are not (scan requested by another app)
     private val library: LibraryRepository? = null,
+    // State of the library location; null when there is no library to set up
+    private val libraryStatus: StateFlow<LibraryStatus?>? = null,
 ): ViewModel() {
 
     private val _navigationState = MutableStateFlow<NavigationState?>(null)
@@ -81,12 +87,19 @@ class MainViewModel(
 
             _pages.value = pages
 
-            _navigationState.value =
-                if (pages.isEmpty()) {
-                    NavigationState.initial()
-                } else {
-                    NavigationState.initial().navigateTo(Screen.Main.ResumeScan)
+            // Wait until the library location is known
+            val status = libraryStatus?.filterNotNull()?.first()
+            _navigationState.value = initialNavigationState(pages.isNotEmpty(), status)
+        }
+        // Once the library folder is chosen, the setup screen gives way to the usual first screen
+        libraryStatus?.let { statuses ->
+            viewModelScope.launch {
+                statuses.collect { status ->
+                    if (status is LibraryStatus.Ready && _navigationState.value?.current == Screen.Main.LibrarySetup) {
+                        _navigationState.value = initialNavigationState(_pages.value.isNotEmpty(), status)
+                    }
                 }
+            }
         }
     }
 
@@ -372,10 +385,18 @@ class MainViewModel(
             "No current page for index $index (${pages.size} pages)")
     }
 
-    /** Leaves the current document, which stays in the library, and starts an empty one. */
+    /**
+     * Leaves the current document, which stays in the library, and starts an empty one. If the
+     * document cannot be saved because the library folder is not available, it is kept and the
+     * setup screen is shown instead.
+     */
     fun startNewDocument() {
-        _pages.value = persistentListOf()
         viewModelScope.launch {
+            if (library != null && !library.canStartNewDocument()) {
+                navigateTo(Screen.Main.LibrarySetup)
+                return@launch
+            }
+            _pages.value = persistentListOf()
             withContext(Dispatchers.IO) {
                 library?.startNewDocument() ?: imageRepository.clear()
             }

@@ -1,4 +1,10 @@
-## ADDED Requirements
+# document-overview Specification
+
+## Purpose
+
+Shows the pages of the open document as a numbered grid, from where a page is picked to be edited, the pages are put in order, and the document is renamed, extended, exported or deleted.
+
+## Requirements
 
 ### Requirement: Page grid
 The document overview SHALL show every page of the document as a processed thumbnail (with its

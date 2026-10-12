@@ -82,11 +82,11 @@ action that imports images into a new document.
 - **THEN** a new document with those two pages is created
 
 ### Requirement: Opening a document
-Tapping a document SHALL open it for editing, showing its pages with their saved crop and filters.
+Tapping a document SHALL open its overview, showing its pages with their saved crop and filters.
 
 #### Scenario: Open
 - **WHEN** the user taps a 5-page document
-- **THEN** the document opens on its first page with 5 pages
+- **THEN** the document overview opens with 5 pages
 
 ### Requirement: Rename
 Each document SHALL offer a Rename action. The new name SHALL be shown in the library and used as
@@ -124,14 +124,19 @@ Each document SHALL offer an Export action that opens the export screen for that
 - **THEN** the export screen opens with that document's pages
 
 ### Requirement: Navigation between library, editor and camera
-Back from the document editor SHALL return to the library. Back from the camera SHALL return to the
-document editor if the open document has pages, and to the library otherwise. Back from the export
-screen SHALL return to the document editor. The export screen's "New document" action SHALL open the
-camera on a new document, keeping the exported document in the library.
+Back from the document overview SHALL return to the library. Back from the page editor SHALL return
+to the document overview. Back from the camera SHALL return to the document overview if the open
+document has pages, and to the library otherwise. Back from the export screen SHALL return to the
+document overview. The export screen's "New document" action SHALL open the camera on a new
+document, keeping the exported document in the library.
+
+#### Scenario: Back from the overview
+- **WHEN** the user presses back in the document overview
+- **THEN** the library is shown
 
 #### Scenario: Back from the editor
-- **WHEN** the user presses back in the document editor
-- **THEN** the library is shown
+- **WHEN** the user presses back in the page editor
+- **THEN** the document overview is shown
 
 #### Scenario: Back from the camera without pages
 - **WHEN** the user presses Scan in the library and then back without capturing
@@ -139,7 +144,7 @@ camera on a new document, keeping the exported document in the library.
 
 #### Scenario: Back from the camera with pages
 - **WHEN** the user captures two pages and presses back
-- **THEN** the document editor is shown with those two pages
+- **THEN** the document overview is shown with those two pages
 
 #### Scenario: New document after export
 - **WHEN** the user presses "New document" on the export screen

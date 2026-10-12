@@ -39,6 +39,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.fairscan.app.data.ImageRepository
 import org.fairscan.app.data.Logger
+import org.fairscan.app.data.library.LibraryRepository
 import org.fairscan.app.domain.CapturedPage
 import org.fairscan.app.domain.Rotation
 import org.fairscan.app.domain.ScanPage
@@ -60,7 +61,12 @@ import org.fairscan.imageprocessing.Quad
 import kotlin.math.min
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class MainViewModel(val imageRepository: ImageRepository, private val logger: Logger): ViewModel() {
+class MainViewModel(
+    val imageRepository: ImageRepository,
+    private val logger: Logger,
+    // Where documents are kept; null when they are not (scan requested by another app)
+    private val library: LibraryRepository? = null,
+): ViewModel() {
 
     private val _navigationState = MutableStateFlow<NavigationState?>(null)
     val currentScreen: StateFlow<Screen?> = _navigationState.map { it?.current }
@@ -366,11 +372,25 @@ class MainViewModel(val imageRepository: ImageRepository, private val logger: Lo
             "No current page for index $index (${pages.size} pages)")
     }
 
+    /** Leaves the current document, which stays in the library, and starts an empty one. */
     fun startNewDocument() {
         _pages.value = persistentListOf()
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
-                imageRepository.clear()
+                library?.startNewDocument() ?: imageRepository.clear()
+            }
+        }
+    }
+
+    /** Makes the saved document [id] the current one; [onOpened] is called once it is. */
+    fun openDocument(id: String, onOpened: () -> Unit = {}) {
+        cancelAdjusting()
+        viewModelScope.launch {
+            val opened = withContext(Dispatchers.IO) { library?.open(id) ?: false }
+            if (opened) {
+                _pages.value = imageRepository.pages()
+                _currentPageIndex.value = 0
+                onOpened()
             }
         }
     }

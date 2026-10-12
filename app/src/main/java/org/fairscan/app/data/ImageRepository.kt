@@ -14,19 +14,20 @@
  */
 package org.fairscan.app.data
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.decodeFromJsonElement
-import kotlinx.serialization.json.int
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import org.fairscan.app.domain.EncodedImage
 import org.fairscan.app.domain.Jpeg
 import org.fairscan.app.domain.PageMetadata
@@ -34,6 +35,7 @@ import org.fairscan.app.domain.PageViewKey
 import org.fairscan.app.domain.Png
 import org.fairscan.app.domain.Rotation
 import org.fairscan.app.domain.ScanPage
+import org.fairscan.app.ui.screens.settings.DefaultFilenameStyle
 import org.fairscan.imageprocessing.Adjustments
 import org.fairscan.imageprocessing.ColorMode
 import org.fairscan.imageprocessing.ImageSize
@@ -42,6 +44,7 @@ import org.fairscan.imageprocessing.Point
 import org.fairscan.imageprocessing.Quad
 import org.fairscan.imageprocessing.cameraIntrinsics
 import java.io.File
+import java.util.Date
 import java.util.Collections.synchronizedMap
 
 const val SOURCE_DIR_NAME = "sources"
@@ -62,6 +65,9 @@ class ImageRepository(
     val transformations: ImageTransformations,
     private val scope: CoroutineScope,
     private val logger: Logger,
+    // Default name of a document created or migrated at the given time (epoch millis)
+    private val documentNamer: (Long) -> String = { DefaultFilenameStyle.SCAN_DATE_TIME.filename(Date(it)) },
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val sourceDir = File(scanRootDir, SOURCE_DIR_NAME).apply { mkdirs() }
     private val processedDir = File(scanRootDir, PROCESSED_DIR_NAME).apply { mkdirs() }
@@ -71,7 +77,9 @@ class ImageRepository(
 
     private val metadataFile = File(processedDir, "document.json")
     private val json = Json { prettyPrint = false; encodeDefaults = true }
-    private var pages: PageStore = PageStore(loadPages())
+    private val loaded = load()
+    private var info: DocumentInfo = loaded.info
+    private var pages: PageStore = PageStore(loaded.pages)
 
     private val processingJobs = synchronizedMap(mutableMapOf<PageViewKey, Deferred<Unit>>())
     private val imageCache = createLruCache<PageViewKey, Deferred<EncodedImage?>>(maxEntries = 50)
@@ -84,7 +92,7 @@ class ImageRepository(
 
     // --- Metadata ---
 
-    private fun loadPages(): MutableList<PageV2> {
+    private fun load(): LoadedDocument {
         thumbnailDir.deleteRecursively() // clean up dir that was used in older versions
         normalizeLegacyFiles()
         val filesOnDisk = processedDir.listFiles()
@@ -93,54 +101,91 @@ class ImageRepository(
             ?.toSet()
             ?: emptySet()
 
-        val metadataPages = if (metadataFile.exists()) {
+        val metadata = if (metadataFile.exists()) {
             runCatching { loadMetadata() }.getOrNull()
         } else null
 
         return when {
-            metadataPages != null ->
-                metadataPages
+            metadata != null ->
+                // A page is kept as long as it can be shown: from its source (processed files are a
+                // cache that is rendered again) or, for old pages without source, from its file
+                metadata.copy(pages = metadata.pages
                     .filter {
-                        processedImageFileName(it.id, it.colorMode, it.quadVersion, it.adjustments.toAdjustments()) in filesOnDisk
-                    }
-                    .toMutableList()
+                        sourceFile(it.id).exists() ||
+                            processedImageFileName(it.id, it.colorMode, it.quadVersion, it.adjustments.toAdjustments()) in filesOnDisk
+                    })
             else ->
-                filesOnDisk
-                    .sorted()
-                    .map { pageFromLegacyFileName(it) }
-                    .toMutableList()
+                LoadedDocument(
+                    newDocumentInfo(),
+                    filesOnDisk
+                        .sorted()
+                        .map { pageFromLegacyFileName(it) },
+                )
         }
     }
 
-    private fun loadMetadata(): List<PageV2> {
-        val json = metadataFile.readText()
+    private fun loadMetadata(): LoadedDocument =
+        parseDocumentMetadata(metadataFile.readText(), ::newDocumentInfo)
 
-        val jsonElement = Json.parseToJsonElement(json)
-        val version = jsonElement.jsonObject["version"]?.jsonPrimitive?.int ?: 1
-
-        return when (version) {
-            1 -> migrateFromV1(Json.decodeFromJsonElement<DocumentMetadataV1>(jsonElement))
-            2 -> Json.decodeFromJsonElement<DocumentMetadataV2>(jsonElement).pages
-            else -> error("Unsupported metadata version: $version")
-        }
+    private fun newDocumentInfo(): DocumentInfo {
+        val now = clock()
+        val oldestSource = sourceDir.listFiles()?.minOfOrNull { it.lastModified() }
+        return DocumentInfo(
+            id = newDocumentId(now),
+            name = documentNamer(now),
+            createdAt = oldestSource ?: now,
+            updatedAt = now,
+        )
     }
 
-    private fun migrateFromV1(meta: DocumentMetadataV1): MutableList<PageV2> =
-        meta.pages.map { pageFromLegacyFileName(it.file) }.toMutableList()
+    private val _changes = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
-    private fun pageFromLegacyFileName(fileName: String): PageV2 {
-        val name = fileName.removeSuffix(".jpg")
-        val dashIndex = name.lastIndexOf('-')
-        val id = if (dashIndex >= 0) name.substring(0, dashIndex) else name
-        return PageV2(id)
-    }
+    /** Emits each time the document was changed and its metadata saved (the library saves it then). */
+    val changes: SharedFlow<Unit> = _changes.asSharedFlow()
 
-    private fun saveMetadata() {
-        val metadata = DocumentMetadataV2(pages = pages.pages())
+    /** [touch] sets the modification date to now; [notify] tells the library that it changed. */
+    private fun saveMetadata(touch: Boolean = true, notify: Boolean = true) {
+        if (touch) info = info.copy(updatedAt = clock())
+        val metadata = info.toMetadata(pages.pages())
         metadataFile.writeText(json.encodeToString(metadata))
+        if (notify) _changes.tryEmit(Unit)
     }
 
     // --- Main API ---
+
+    suspend fun documentInfo(): DocumentInfo = mutex.withLock { info }
+
+    /** The document as it would be saved in the library. */
+    suspend fun snapshot(): DocumentMetadataV3 = mutex.withLock { info.toMetadata(pages.pages()) }
+
+    /** Gives the document another id, when the one it has is used by something else in the library. */
+    suspend fun reassignDocumentId() = mutex.withLock {
+        info = info.copy(id = newDocumentId(clock()))
+        saveMetadata()
+    }
+
+    /**
+     * Makes [document] the working document, replacing the current one. Its sources are obtained from
+     * [readSource]; pages without a source are left out. Processed images are rendered again when
+     * needed. Neither the modification date nor the library are touched: this is not an edit.
+     */
+    suspend fun load(document: LoadedDocument, readSource: (pageId: String) -> ByteArray?) =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                clearFiles()
+                val kept = document.pages.filter { page ->
+                    readSource(page.id)?.also { sourceFile(page.id).writeBytes(it) } != null
+                }
+                info = document.info
+                pages = PageStore(kept)
+                saveMetadata(touch = false, notify = false)
+            }
+        }
+
+    suspend fun rename(name: String) = mutex.withLock {
+        info = info.copy(name = name)
+        saveMetadata()
+    }
 
     suspend fun pages(): List<ScanPage> = mutex.withLock {
         pages.pages().mapNotNull {
@@ -234,17 +279,28 @@ class ImageRepository(
             adjustments = adjustments,
         )
 
+        renderIfMissing(key, metadata.copy(normalizedQuad = update.normalizedQuad), update.colorMode)
+
+        mutex.withLock {
+            pages.update(id) { update.updatedPage }
+            saveMetadata()
+        }
+        deleteStaleAdjustedFiles(id, processedImageFile(key))
+    }
+
+    /** Renders the processed file of [key] from the source capture, unless it exists already. */
+    private suspend fun renderIfMissing(key: PageViewKey, metadata: PageMetadata, colorMode: ColorMode) {
         val processedFile = processedImageFile(key)
         val job = processingJobs.computeIfAbsent(key) {
             scope.async(Dispatchers.IO) {
                 if (!processedFile.exists()) {
-                    val sourceJpeg = Jpeg(sourceFile.readBytes())
+                    val sourceJpeg = Jpeg(sourceFile(key.pageId).readBytes())
                     val processedJpeg =
                         transformations.process(
                             sourceJpeg,
-                            metadata = metadata.copy(normalizedQuad = update.normalizedQuad),
-                            colorMode = update.colorMode,
-                            adjustments = adjustments,
+                            metadata = metadata,
+                            colorMode = colorMode,
+                            adjustments = key.adjustments,
                         )
                     processedFile.writeBytes(processedJpeg.bytes)
                 }
@@ -255,12 +311,29 @@ class ImageRepository(
         } finally {
             processingJobs.remove(key, job)
         }
+    }
 
-        mutex.withLock {
-            pages.update(id) { update.updatedPage }
-            saveMetadata()
+    /**
+     * Processed files are a cache: when one is missing (after the document was opened from the
+     * library, for instance) it is rendered again from the source with the page's saved crop, filter
+     * and adjustments. Returns false when it cannot be, e.g. [key] is not the page's current rendering.
+     */
+    private suspend fun renderFromSource(key: PageViewKey): Boolean {
+        val page = mutex.withLock { pages.get(key.pageId) } ?: return false
+        val metadata = page.toMetadata() ?: return false
+        val isCurrent = key.colorMode == page.colorMode &&
+            key.quadVersion == page.quadVersion &&
+            key.adjustments == page.adjustments.toAdjustments()
+        if (!isCurrent || !sourceFile(key.pageId).exists()) return false
+        return try {
+            renderIfMissing(key, metadata, key.colorMode ?: metadata.autoColorMode)
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.e("ImageRepository", "Failed to render page ${key.pageId} from its source", e)
+            false
         }
-        deleteStaleAdjustedFiles(id, processedFile)
     }
 
     // Experimenting with sliders leaves one file per tried value: once a rendering is committed,
@@ -309,7 +382,7 @@ class ImageRepository(
     private suspend fun computeProcessedImage(key: PageViewKey): EncodedImage? =
         withContext(Dispatchers.IO) {
             val baseFile = processedImageFile(key)
-            if (!baseFile.exists()) return@withContext null
+            if (!baseFile.exists() && !renderFromSource(key)) return@withContext null
             val bytes = baseFile.readBytes()
             val baseImage = if (baseFile.extension == "png") Png(bytes) else Jpeg(bytes)
             if (key.rotation == Rotation.R0) {
@@ -386,9 +459,16 @@ class ImageRepository(
         // No need to clean caches: stale entries will be evicted by LRU
     }
 
+    // Clearing starts a new document, with a new identity
     suspend fun clear() = mutex.withLock {
-        pages.clear()
+        info = newDocumentInfo()
+        clearFiles()
         saveMetadata()
+    }
+
+    /** Empties the working directories (document.json is rewritten by the caller) and the caches. */
+    private fun clearFiles() {
+        pages.clear()
         sourceDir.listFiles()?.forEach { it.delete() }
         processedDir.listFiles()?.forEach { it.delete() }
         synchronized(imageCache) { imageCache.clear() }

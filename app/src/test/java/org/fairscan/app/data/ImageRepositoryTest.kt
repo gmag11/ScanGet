@@ -16,12 +16,17 @@ package org.fairscan.app.data
 
 import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.toPersistentList
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.assertj.core.api.Assertions.assertThat
 import org.fairscan.app.domain.EncodedImage
 import org.fairscan.app.domain.Jpeg
@@ -73,7 +78,10 @@ class ImageRepositoryTest {
         resizeToThumbnail: (EncodedImage) -> Jpeg = { input -> jpeg(input.bytes[0]) },
         process: (Jpeg, PageMetadata, ColorMode, Adjustments) -> Jpeg = { _, _, _, _ ->
             throw UnsupportedOperationException()
-        }
+        },
+        clock: () -> Long = System::currentTimeMillis,
+        namer: (Long) -> String = { "Scan $it" },
+        scope: CoroutineScope = testScope,
     ): ImageRepository {
         val transformations = object : ImageTransformations {
             override fun rotate(input: EncodedImage, rotationDegrees: Int): EncodedImage =
@@ -88,7 +96,7 @@ class ImageRepositoryTest {
             ): Jpeg = process(source, metadata, colorMode, adjustments)
         }
         val logger = Logger { _, _, _ -> }
-        return ImageRepository(getFilesDir(), transformations, testScope, logger)
+        return ImageRepository(getFilesDir(), transformations, scope, logger, namer, clock)
     }
 
     @Test
@@ -564,6 +572,189 @@ class ImageRepositoryTest {
 
         val repo2 = repo()
         assertThat(repo2.imageIds()).containsExactly(id)
+    }
+
+    @Test
+    fun `new document gets an identity that is saved as version 3`() = runTest {
+        var now = 1_000L
+        val repo = repo(clock = { now }, namer = { "Scan at $it" })
+        repo.add(jpeg(1), jpeg(2), metadata1, COLOR)
+
+        val info = repo.documentInfo()
+        assertThat(info.name).isEqualTo("Scan at 1000")
+        assertThat(info.createdAt).isEqualTo(1_000L)
+        val saved = Json.decodeFromString<DocumentMetadataV3>(File(processedDir(), "document.json").readText())
+        assertThat(saved.version).isEqualTo(3)
+        assertThat(saved.id).isEqualTo(info.id)
+        assertThat(saved.pages).hasSize(1)
+
+        now = 5_000L
+        val reopened = repo(clock = { now })
+        assertThat(reopened.documentInfo().id).isEqualTo(info.id)
+        assertThat(reopened.documentInfo().name).isEqualTo("Scan at 1000")
+    }
+
+    @Test
+    fun `document identity and creation date survive page operations while the modification date moves`() =
+        runTest {
+            var now = 1_000L
+            val repo = repo(clock = { now })
+            repo.add(jpeg(1), jpeg(2), metadata1, COLOR)
+            val first = repo.documentInfo()
+
+            now = 2_000L
+            repo.rotate(repo.imageIds()[0], clockwise = true)
+            now = 3_000L
+            repo.add(jpeg(3), jpeg(4), metadata1, COLOR)
+            repo.movePage(repo.imageIds()[1], 0)
+
+            val info = repo.documentInfo()
+            assertThat(info.id).isEqualTo(first.id)
+            assertThat(info.name).isEqualTo(first.name)
+            assertThat(info.createdAt).isEqualTo(first.createdAt)
+            assertThat(info.updatedAt).isEqualTo(3_000L)
+        }
+
+    @Test
+    fun `rename is saved`() = runTest {
+        val repo = repo()
+        repo.add(jpeg(1), jpeg(2), metadata1, COLOR)
+
+        repo.rename("Invoice March")
+
+        assertThat(repo.documentInfo().name).isEqualTo("Invoice March")
+        assertThat(repo().documentInfo().name).isEqualTo("Invoice March")
+    }
+
+    @Test
+    fun `clear starts a new document with a new identity`() = runTest {
+        val repo = repo()
+        repo.add(jpeg(1), jpeg(2), metadata1, COLOR)
+        val before = repo.documentInfo()
+
+        repo.clear()
+
+        assertThat(repo.documentInfo().id).isNotEqualTo(before.id)
+        assertThat(repo.imageIds()).isEmpty()
+    }
+
+    @Test
+    fun `version 2 file is read as a document with a generated identity and is saved as version 3`() =
+        runTest {
+            val first = repo()
+            val jpeg = jpeg(101)
+            first.add(jpeg, jpeg(51), metadata1, COLOR)
+            val id = first.imageIds()[0]
+            val v2 = Json { encodeDefaults = true }.encodeToString(
+                DocumentMetadataV2(pages = listOf(PageV2(id, colorMode = COLOR, isColored = true,
+                    quad = quad1.toSerializable())))
+            )
+            writeDocumentDotJson(v2)
+
+            val repo = repo(namer = { "Migrated" })
+            assertThat(repo.documentInfo().name).isEqualTo("Migrated")
+            assertThat(repo.documentInfo().id).isNotEmpty()
+            assertThat(repo.imageIds()).containsExactly(id)
+
+            repo.rotate(id, clockwise = true)
+            val saved = Json.decodeFromString<DocumentMetadataV3>(File(processedDir(), "document.json").readText())
+            assertThat(saved.version).isEqualTo(3)
+            assertThat(saved.id).isEqualTo(repo.documentInfo().id)
+        }
+
+    @Test
+    fun `pages are kept and rendered again from their source when processed files are gone`() = runTest {
+        val rendered = mutableListOf<Triple<ColorMode, Quad, Adjustments>>()
+        val process = { source: Jpeg, metadata: PageMetadata, mode: ColorMode, adjustments: Adjustments ->
+            rendered.add(Triple(mode, metadata.normalizedQuad, adjustments))
+            jpeg(source.bytes[0], 9)
+        }
+        val first = repo(process = process)
+        first.add(jpeg(101), jpeg(51), metadata1, COLOR)
+        val id = first.imageIds()[0]
+        val userQuad = Quad(Point(.05, .05), Point(.9, .06), Point(.92, .9), Point(.04, .88))
+        val adjustments = Adjustments(brightness = 20, contrast = -10)
+        first.setUserQuad(id, userQuad)
+        first.setRendering(id, GRAYSCALE, adjustments)
+        val saved = first.pages().first()
+        val keyBefore = saved.key()
+        val imageBefore = first.image(keyBefore)
+        rendered.clear()
+
+        jpegFiles(processedDir())!!.forEach { it!!.delete() }
+        val reopened = repo(process = process)
+
+        assertThat(reopened.imageIds()).containsExactly(id)
+        val page = reopened.pages().first()
+        assertThat(page.key()).isEqualTo(keyBefore)
+        assertThat(reopened.image(page.key())?.bytes).isEqualTo(imageBefore?.bytes)
+        assertThat(rendered).containsExactly(Triple(GRAYSCALE, userQuad, adjustments.forMode(GRAYSCALE)))
+        assertThat(reopened.getThumbnail(page.key())).isNotNull()
+        assertThat(rendered).hasSize(1)
+    }
+
+    @Test
+    fun `a page whose source and processed file are both gone is dropped`() = runTest {
+        val first = repo()
+        first.add(jpeg(101), jpeg(51), metadata1, COLOR)
+        jpegFiles(processedDir())!!.forEach { it!!.delete() }
+        jpegFiles(sourceDir())!!.forEach { it!!.delete() }
+
+        assertThat(repo().imageIds()).isEmpty()
+    }
+
+    @Test
+    fun `a rendering that is not the current one of the page is not rendered from the source`() = runTest {
+        val first = repo()
+        first.add(jpeg(101), jpeg(51), metadata1, COLOR)
+        val id = first.imageIds()[0]
+        jpegFiles(processedDir())!!.forEach { it!!.delete() }
+
+        val reopened = repo()
+
+        assertThat(reopened.image(PageViewKey(id, R0, GRAYSCALE, 0))).isNull()
+    }
+
+    @Test
+    fun `a failing render gives no image instead of an error`() = runTest {
+        val first = repo()
+        first.add(jpeg(101), jpeg(51), metadata1, COLOR)
+        val page = first.pages().first()
+        jpegFiles(processedDir())!!.forEach { it!!.delete() }
+
+        // As in the app, where the scope has a supervisor job: a failed render must not cancel it
+        val reopened = repo(
+            process = { _, _, _, _ -> throw IllegalStateException("boom") },
+            scope = CoroutineScope(SupervisorJob()),
+        )
+
+        assertThat(reopened.image(page.key())).isNull()
+    }
+
+    @Test
+    fun `every change to the document emits on changes`() = runTest {
+        val process = { source: Jpeg, _: PageMetadata, _: ColorMode, _: Adjustments -> jpeg(source.bytes[0], 7) }
+        val repo = repo(process = process)
+        var count = 0
+        val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            repo.changes.collect { count++ }
+        }
+        suspend fun expectOneMore(action: suspend () -> Unit) {
+            val before = count
+            action()
+            assertThat(count).describedAs("emissions").isEqualTo(before + 1)
+        }
+
+        expectOneMore { repo.add(jpeg(1), jpeg(2), metadata1, COLOR) }
+        expectOneMore { repo.add(jpeg(3), jpeg(4), metadata1, COLOR) }
+        val ids = repo.imageIds()
+        expectOneMore { repo.rotate(ids[0], clockwise = true) }
+        expectOneMore { repo.movePage(ids[1], 0) }
+        expectOneMore { repo.setUserQuad(ids[0], quad1) }
+        expectOneMore { repo.setRendering(ids[0], GRAYSCALE, Adjustments(brightness = 10)) }
+        expectOneMore { repo.rename("Renamed") }
+        expectOneMore { repo.delete(ids[1]) }
+        collector.cancel()
     }
 
     private fun processedDir(): File = File(getFilesDir(), PROCESSED_DIR_NAME)

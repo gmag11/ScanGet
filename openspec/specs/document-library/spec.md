@@ -1,4 +1,10 @@
-## ADDED Requirements
+# document-library Specification
+
+## Purpose
+
+Keeps every scanned document in a library, saved automatically with its original captures and the editing data of each page, so that it can be reopened, edited and exported again with the same result.
+
+## Requirements
 
 ### Requirement: Automatic saving
 A document SHALL be saved to the library as soon as its first page is added, without any user

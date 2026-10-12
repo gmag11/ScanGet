@@ -45,6 +45,7 @@ import kotlinx.coroutines.withContext
 import org.fairscan.app.AppContainer
 import org.fairscan.app.R
 import org.fairscan.app.data.FileManager
+import org.fairscan.app.data.DocumentInfo
 import org.fairscan.app.data.ImageRepository
 import org.fairscan.app.domain.ExportQuality
 import org.fairscan.app.domain.PageViewKey
@@ -117,9 +118,12 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
         setFilename("")
     }
 
+    // The document being exported, read when the export is prepared
+    private var documentInfo: DocumentInfo? = null
+
     private fun defaultFilename(): String {
         val state = _uiState.value
-        return settingsRepository.defaultFilenameStyle.value.filename() +
+        return defaultExportBaseName(documentInfo, settingsRepository.defaultFilenameStyle.value) +
             pagesSuffix(state.exportedPageNumbers, state.totalPages)
     }
 
@@ -206,6 +210,7 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
     private fun prepare(keepSharedState: Boolean) {
         viewModelScope.launch {
             val allPages = imageRepository.pages()
+            documentInfo = imageRepository.documentInfo()
             // Forget selected pages that no longer exist
             val existing = allPages.map { it.id }.toSet()
             _uiState.update { state ->
@@ -389,7 +394,7 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
             val base = if (state.isUserDefinedFilename) {
                 state.filename.removeSuffix(".pdf").removeSuffix(".jpg")
             } else {
-                settingsRepository.defaultFilenameStyle.value.filename()
+                defaultExportBaseName(imageRepository.documentInfo(), settingsRepository.defaultFilenameStyle.value)
             }
             preparationDir.mkdirs()
             fun nameOf(page: ScanPage) =

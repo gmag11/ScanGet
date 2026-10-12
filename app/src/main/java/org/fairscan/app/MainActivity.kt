@@ -45,6 +45,8 @@ import androidx.compose.ui.platform.toClipEntry
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat.checkSelfPermission
 import androidx.core.net.toFile
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -101,9 +103,13 @@ class MainActivity : ComponentActivity() {
         }
 
         val imageRepository = sessionViewModel.imageRepository
+        // The autosave waits for a pause in the edits: do not lose them if the app goes away
+        lifecycle.addObserver(LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) sessionViewModel.saveToLibrary()
+        })
         viewModel = viewModels<MainViewModel> {
             appContainer.viewModelFactory {
-                MainViewModel(imageRepository, appContainer.logger)
+                MainViewModel(imageRepository, appContainer.logger, sessionViewModel.libraryRepository)
             }
         }.value
         val exportViewModel: ExportViewModel by viewModels {

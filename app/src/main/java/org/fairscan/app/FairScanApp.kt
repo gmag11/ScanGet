@@ -29,6 +29,8 @@ import org.fairscan.app.data.FileLogger
 import org.fairscan.app.data.FileManager
 import org.fairscan.app.data.LogRepository
 import org.fairscan.app.data.OcrLanguageRepository
+import org.fairscan.app.data.library.FileLibraryStore
+import org.fairscan.app.data.library.LibraryStore
 import org.fairscan.app.domain.ImageSegmentationService
 import org.fairscan.app.domain.OcrService
 import org.fairscan.app.platform.AndroidImageLoader
@@ -70,6 +72,14 @@ class AppContainer(context: Context) {
     val imageSegmentationService = ImageSegmentationService(context, logger)
     val imageLoader = AndroidImageLoader(context.contentResolver)
     val settingsRepository = SettingsRepository(context, dataStore, scope)
+
+    /**
+     * Where the library is kept. Documents never belong in the app's private storage: until the user
+     * can choose the library folder, this is only available in debug builds, to develop and test
+     * the library. Without a store, nothing is saved to the library.
+     */
+    val libraryStore: LibraryStore? =
+        if (BuildConfig.DEBUG) FileLibraryStore(File(context.filesDir, "library")) else null
 
     init {
         scope.launch { imageSegmentationService.initialize() }

@@ -19,10 +19,14 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import org.fairscan.app.data.ImageRepository
 import org.fairscan.app.data.Logger
+import org.fairscan.app.data.library.LibraryRepository
+import org.fairscan.app.data.library.LibraryStore
 import org.fairscan.app.platform.ImageProcessor
 import java.io.File
+import java.util.Date
 import java.util.UUID
 
 class SessionViewModel(
@@ -30,6 +34,8 @@ class SessionViewModel(
     val launchMode: LaunchMode,
     appContainer: AppContainer
 ) : AndroidViewModel(app) {
+
+    private val appLogger = appContainer.logger
 
     val sessionDir: File = when (launchMode) {
         LaunchMode.NORMAL ->
@@ -45,9 +51,32 @@ class SessionViewModel(
         scanRootDir = sessionDir,
         scope = viewModelScope,
         logger = appContainer.logger,
+        documentNamer = { appContainer.settingsRepository.defaultFilenameStyle.value.filename(Date(it)) },
+        // A scan requested by another app is temporary: it is not kept in the library
+        libraryStore = if (launchMode == LaunchMode.NORMAL) appContainer.libraryStore else null,
     )
 
     val imageRepository: ImageRepository = sessionContainer.imageRepository
+
+    /** Null when documents are not kept (scan requested by another app, no library location). */
+    val libraryRepository: LibraryRepository? = sessionContainer.libraryRepository
+
+    init {
+        // A document left by a previous version (or by a crash) is added to the library right away
+        saveToLibrary()
+    }
+
+    /** Saves the working document to the library now, without waiting for the autosave. */
+    fun saveToLibrary() {
+        val library = libraryRepository ?: return
+        viewModelScope.launch {
+            try {
+                library.flush()
+            } catch (e: Exception) {
+                appLogger.e("SessionViewModel", "Failed to save the working document", e)
+            }
+        }
+    }
 
     override fun onCleared() {
         super.onCleared()
@@ -63,6 +92,8 @@ class ScanSessionContainer(
     scanRootDir: File,
     scope: CoroutineScope,
     logger: Logger,
+    documentNamer: (Long) -> String,
+    libraryStore: LibraryStore?,
 ) {
     private val density = context.resources.displayMetrics.density
     private val thumbnailSizePx = (THUMBNAIL_SIZE_DP * density).toInt()
@@ -72,5 +103,9 @@ class ScanSessionContainer(
         ImageProcessor(thumbnailSizePx),
         scope,
         logger,
+        documentNamer,
     )
+
+    val libraryRepository: LibraryRepository? =
+        libraryStore?.let { LibraryRepository(it, imageRepository, scope, logger) }
 }

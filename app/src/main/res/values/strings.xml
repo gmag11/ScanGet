@@ -193,6 +193,7 @@
     <string name="settings_section_ocr">Text recognition</string>
     <!-- Settings screen: section title -->
     <string name="settings_section_scan">Scan</string>
+    <string name="settings_torch_always_on">Always turn on the torch when using the camera</string>
     <!-- Settings screen: section title -->
     <string name="settings_section_export">Export</string>
     <!-- Export screen: button -->

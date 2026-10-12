@@ -18,6 +18,7 @@ import android.content.Context
 import androidx.core.net.toUri
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.documentfile.provider.DocumentFile
@@ -45,9 +46,13 @@ class SettingsRepository(
     private val EXPORT_DIR_URI = stringPreferencesKey("export_dir_uri")
     private val EXPORT_FORMAT = stringPreferencesKey("export_format")
     private val EXPORT_QUALITY = stringPreferencesKey("export_quality")
+    private val TORCH_ALWAYS_ON = booleanPreferencesKey("torch_always_on")
 
     val defaultColorMode: Flow<DefaultColorMode> =
         dataStore.data.map { prefs -> parseDefaultColorMode(prefs[DEFAULT_COLOR_MODE]) }
+
+    val torchAlwaysOn: Flow<Boolean> =
+        dataStore.data.map { prefs -> prefs[TORCH_ALWAYS_ON] ?: false }
 
     val exportDirUri: Flow<String?> =
         dataStore.data.map { prefs ->
@@ -95,6 +100,12 @@ class SettingsRepository(
     suspend fun setDefaultColorMode(mode: DefaultColorMode) {
         dataStore.edit { prefs ->
             prefs[DEFAULT_COLOR_MODE] = mode.name
+        }
+    }
+
+    suspend fun setTorchAlwaysOn(enabled: Boolean) {
+        dataStore.edit { prefs ->
+            prefs[TORCH_ALWAYS_ON] = enabled
         }
     }
 

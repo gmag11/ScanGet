@@ -14,6 +14,12 @@
  */
 package org.fairscan.app.ui.screens.settings
 
+import android.content.ContextWrapper
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runTest
 import org.assertj.core.api.Assertions.assertThat
 import org.fairscan.imageprocessing.ColorMode
 import org.fairscan.app.ui.screens.settings.DefaultFilenameStyle.SCAN_DATE_TIME
@@ -67,5 +73,20 @@ class SettingsRepositoryTest {
         assertThat(parseDefaultColorMode(null)).isEqualTo(DefaultColorMode.AUTO)
         assertThat(parseDefaultColorMode("")).isEqualTo(DefaultColorMode.AUTO)
         assertThat(parseDefaultColorMode("SEPIA")).isEqualTo(DefaultColorMode.AUTO)
+    }
+
+    @Test
+    fun torch_always_on_is_off_by_default_and_persists() = runTest {
+        val file = java.io.File.createTempFile("settings", ".preferences_pb").apply { delete() }
+        val scope = TestScope(UnconfinedTestDispatcher())
+        val dataStore = PreferenceDataStoreFactory.create(scope = scope.backgroundScope) { file }
+        val repo = SettingsRepository(ContextWrapper(null), dataStore, scope.backgroundScope)
+
+        assertThat(repo.torchAlwaysOn.first()).isFalse()
+        repo.setTorchAlwaysOn(true)
+        assertThat(repo.torchAlwaysOn.first()).isTrue()
+        repo.setTorchAlwaysOn(false)
+        assertThat(repo.torchAlwaysOn.first()).isFalse()
+        file.delete()
     }
 }

@@ -192,6 +192,13 @@ class CameraViewModel(appContainer: AppContainer): ViewModel() {
         }
     }
 
+    /** Resets the torch to the "always on" setting; called each time the capture screen is entered. */
+    fun onCaptureScreenEntered() {
+        viewModelScope.launch {
+            _isTorchEnabled.value = settingsRepository.torchAlwaysOn.first()
+        }
+    }
+
     fun setTorchEnabled(enabled: Boolean) {
         _isTorchEnabled.value = enabled
     }

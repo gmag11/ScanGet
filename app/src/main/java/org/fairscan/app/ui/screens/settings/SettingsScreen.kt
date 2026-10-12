@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -40,6 +41,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -52,6 +54,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.intl.Locale
 import androidx.compose.ui.tooling.preview.Preview
@@ -69,6 +72,7 @@ import org.fairscan.app.ui.theme.FairScanTheme
 fun SettingsScreen(
     uiState: SettingsUiState,
     onDefaultColorModeChanged: (DefaultColorMode) -> Unit,
+    onTorchAlwaysOnChanged: (Boolean) -> Unit,
     onChooseDirectoryClick: () -> Unit,
     onResetExportDirClick: () -> Unit,
     onExportFormatChanged: (ExportFormat) -> Unit,
@@ -88,6 +92,7 @@ fun SettingsScreen(
         SettingsContent(
             uiState,
             onDefaultColorModeChanged,
+            onTorchAlwaysOnChanged,
             onChooseDirectoryClick,
             onResetExportDirClick,
             onExportFormatChanged,
@@ -103,6 +108,7 @@ fun SettingsScreen(
 private fun SettingsContent(
     uiState: SettingsUiState,
     onDefaultColorModeChanged: (DefaultColorMode) -> Unit,
+    onTorchAlwaysOnChanged: (Boolean) -> Unit,
     onChooseDirectoryClick: () -> Unit,
     onResetExportDirClick: () -> Unit,
     onExportFormatChanged: (ExportFormat) -> Unit,
@@ -143,6 +149,21 @@ private fun SettingsContent(
             onValueChanged = onDefaultColorModeChanged,
             label = { t -> context.getString(t.labelResource) },
             selectedValue = uiState.defaultColorMode,
+        )
+
+        ListItem(
+            headlineContent = { Text(stringResource(R.string.settings_torch_always_on)) },
+            trailingContent = {
+                Switch(
+                    checked = uiState.torchAlwaysOn,
+                    onCheckedChange = onTorchAlwaysOnChanged,
+                )
+            },
+            modifier = Modifier.toggleable(
+                value = uiState.torchAlwaysOn,
+                role = Role.Switch,
+                onValueChange = onTorchAlwaysOnChanged,
+            ),
         )
 
         Spacer(Modifier.height(16.dp))
@@ -366,6 +387,7 @@ fun SettingsScreenPreview(uiState: SettingsUiState) {
         SettingsScreen(
             uiState,
             onDefaultColorModeChanged = {},
+            onTorchAlwaysOnChanged = {},
             onChooseDirectoryClick = {},
             onResetExportDirClick = {},
             onExportFormatChanged = {},

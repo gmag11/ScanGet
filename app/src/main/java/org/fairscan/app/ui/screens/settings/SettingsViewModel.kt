@@ -31,6 +31,7 @@ import org.fairscan.app.domain.ExportQuality
 
 data class SettingsUiState(
     val defaultColorMode: DefaultColorMode = DefaultColorMode.AUTO,
+    val torchAlwaysOn: Boolean = false,
     val export: ExportSettingsUiState = ExportSettingsUiState(),
     val installedOcrLanguages: Set<String> = emptySet(),
     val enabledOcrLanguages: Set<String> = emptySet(),
@@ -78,13 +79,23 @@ class SettingsViewModel(container: AppContainer) : ViewModel() {
         }
     val uiState = combine(
         repo.defaultColorMode,
+        repo.torchAlwaysOn,
         exportSettingsState,
         _installedLanguages,
         ocrLanguageRepo.enabledLanguages,
         _ocrDownload,
-    ) { colorMode, exportSettings, installed, enabled, download ->
+    ) { values ->
+        val colorMode = values[0] as DefaultColorMode
+        val torchAlwaysOn = values[1] as Boolean
+        val exportSettings = values[2] as ExportSettingsUiState
+        @Suppress("UNCHECKED_CAST")
+        val installed = values[3] as Set<String>
+        @Suppress("UNCHECKED_CAST")
+        val enabled = values[4] as Set<String>
+        val download = values[5] as OcrDownloadUiState?
         SettingsUiState(
             defaultColorMode = colorMode,
+            torchAlwaysOn = torchAlwaysOn,
             export = exportSettings,
             installedOcrLanguages = installed,
             enabledOcrLanguages = enabled,
@@ -110,6 +121,12 @@ class SettingsViewModel(container: AppContainer) : ViewModel() {
     fun setDefaultColorMode(pref: DefaultColorMode) {
         viewModelScope.launch {
             repo.setDefaultColorMode(pref)
+        }
+    }
+
+    fun setTorchAlwaysOn(enabled: Boolean) {
+        viewModelScope.launch {
+            repo.setTorchAlwaysOn(enabled)
         }
     }
 

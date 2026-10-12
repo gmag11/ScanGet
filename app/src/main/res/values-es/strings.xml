@@ -90,6 +90,7 @@
     <string name="settings_ocr_suggested">Sugerido</string>
     <string name="settings_section_ocr">Reconocimiento de texto</string>
     <string name="settings_section_scan">Escaneo</string>
+    <string name="settings_torch_always_on">Encender siempre la linterna al usar la cámara</string>
     <string name="settings_section_export">Exportación</string>
     <string name="share">Compartir</string>
     <string name="share_document">Compartir documento</string>

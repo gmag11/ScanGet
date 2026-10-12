@@ -34,6 +34,7 @@ import org.fairscan.app.domain.PageViewKey
 import org.fairscan.app.domain.Png
 import org.fairscan.app.domain.Rotation
 import org.fairscan.app.domain.ScanPage
+import org.fairscan.imageprocessing.Adjustments
 import org.fairscan.imageprocessing.ColorMode
 import org.fairscan.imageprocessing.ImageSize
 import org.fairscan.imageprocessing.OpticalMeasures
@@ -45,6 +46,9 @@ import java.util.Collections.synchronizedMap
 
 const val SOURCE_DIR_NAME = "sources"
 const val PROCESSED_DIR_NAME = "scanned_pages"
+
+// Processed files made with non-neutral adjustments end with ".a<hash>.jpg" or ".png".
+private val ADJUSTED_FILE = Regex("""\.a[0-9a-f]{8}\.(jpg|png)$""")
 const val THUMBNAIL_DIR_NAME = "thumbnails"
 
 /**
@@ -96,7 +100,9 @@ class ImageRepository(
         return when {
             metadataPages != null ->
                 metadataPages
-                    .filter { processedImageFileName(it.id, it.colorMode, it.quadVersion) in filesOnDisk }
+                    .filter {
+                        processedImageFileName(it.id, it.colorMode, it.quadVersion, it.adjustments.toAdjustments()) in filesOnDisk
+                    }
                     .toMutableList()
             else ->
                 filesOnDisk
@@ -140,7 +146,8 @@ class ImageRepository(
         pages.pages().mapNotNull {
             runCatching {
                 val manualRotation = Rotation.fromDegrees(it.manualRotationDegrees)
-                ScanPage(it.id, manualRotation, it.colorMode, it.quadVersion, it.toMetadata())
+                ScanPage(it.id, manualRotation, it.colorMode, it.quadVersion, it.toMetadata(),
+                    it.adjustments.toAdjustments())
             }.getOrNull()
         }
     }
@@ -171,10 +178,17 @@ class ImageRepository(
             imageCache.put(key, CompletableDeferred(processed))
         }
 
-    suspend fun setColorMode(id: String, colorMode: ColorMode) {
+    /**
+     * Renders the page with the given filter and adjustments, and stores both. Controls the filter
+     * does not expose are neutralized, so that equal renderings share one file. Callers that switch
+     * filter on their own pass [Adjustments.NEUTRAL], since adjustments only make sense for the
+     * filter they were made on.
+     */
+    suspend fun setRendering(id: String, colorMode: ColorMode, adjustments: Adjustments) {
+        val effective = adjustments.forMode(colorMode)
         updatePage(id) { page, metadata ->
             PageUpdate(
-                updatedPage = page.copy(colorMode = colorMode),
+                updatedPage = page.copy(colorMode = colorMode, adjustments = effective.toSerializable()),
                 normalizedQuad = metadata.normalizedQuad,
                 colorMode = colorMode,
             )
@@ -211,11 +225,13 @@ class ImageRepository(
             return
 
         val update = buildUpdate(page, metadata)
+        val adjustments = update.updatedPage.adjustments.toAdjustments()
         val key = PageViewKey(
             pageId = id,
             rotation = Rotation.R0,
             colorMode = update.colorMode,
-            quadVersion = update.updatedPage.quadVersion
+            quadVersion = update.updatedPage.quadVersion,
+            adjustments = adjustments,
         )
 
         val processedFile = processedImageFile(key)
@@ -227,7 +243,8 @@ class ImageRepository(
                         transformations.process(
                             sourceJpeg,
                             metadata = metadata.copy(normalizedQuad = update.normalizedQuad),
-                            colorMode = update.colorMode
+                            colorMode = update.colorMode,
+                            adjustments = adjustments,
                         )
                     processedFile.writeBytes(processedJpeg.bytes)
                 }
@@ -243,6 +260,16 @@ class ImageRepository(
             pages.update(id) { update.updatedPage }
             saveMetadata()
         }
+        deleteStaleAdjustedFiles(id, processedFile)
+    }
+
+    // Experimenting with sliders leaves one file per tried value: once a rendering is committed,
+    // keep only that one. Files with neutral adjustments are kept so that switching filter back
+    // stays instant.
+    private fun deleteStaleAdjustedFiles(id: String, current: File) {
+        processedDir.listFiles()
+            ?.filter { it.name.startsWith("$id.") && ADJUSTED_FILE.containsMatchIn(it.name) && it != current }
+            ?.forEach { it.delete() }
     }
 
     suspend fun rotate(id: String, clockwise: Boolean) = mutex.withLock {
@@ -309,14 +336,23 @@ class ImageRepository(
 
     // --- Other operations ---
 
-    private fun processedImageFileName(id: String, colorMode: ColorMode?, quadVersion: Int) : String {
+    // Pages with neutral adjustments keep the file names used before adjustments existed. The hash
+    // never contains '-', which normalizeLegacyFiles reads as a legacy rotation separator.
+    private fun processedImageFileName(
+        id: String,
+        colorMode: ColorMode?,
+        quadVersion: Int,
+        adjustments: Adjustments = Adjustments.NEUTRAL,
+    ) : String {
         val sb = StringBuilder(id)
         if (colorMode != null)
             sb.append(".").append(colorMode.name.lowercase())
         if (quadVersion > 0)
             sb.append(".q").append(quadVersion)
+        if (!adjustments.isNeutral)
+            sb.append(".a").append(adjustments.hash())
 
-        if (colorMode == ColorMode.BLACK_AND_WHITE)
+        if (colorMode?.isBitonal == true)
             sb.append(".png")
         else
             sb.append(".jpg")
@@ -325,7 +361,7 @@ class ImageRepository(
     }
 
     private fun processedImageFile(key: PageViewKey) : File =
-        File(processedDir, processedImageFileName(key.pageId, key.colorMode, key.quadVersion))
+        File(processedDir, processedImageFileName(key.pageId, key.colorMode, key.quadVersion, key.adjustments))
 
     private fun sourceFile(id: String): File =
         File(sourceDir, "$id.jpg")

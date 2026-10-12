@@ -27,6 +27,7 @@ import org.fairscan.app.domain.PageMetadata
 import org.fairscan.app.domain.Png
 import org.fairscan.app.domain.Rotation
 import org.fairscan.app.ui.screens.settings.DefaultColorMode
+import org.fairscan.imageprocessing.Adjustments
 import org.fairscan.imageprocessing.ColorMode
 import org.fairscan.imageprocessing.ImageSize
 import org.fairscan.imageprocessing.Mask
@@ -93,10 +94,11 @@ class ImageProcessor(private val thumbnailSizePx: Int) : ImageTransformations {
     override fun process(
         source: Jpeg,
         metadata: PageMetadata,
-        colorMode: ColorMode
+        colorMode: ColorMode,
+        adjustments: Adjustments,
     ): EncodedImage {
         val baseRotation = metadata.baseRotation
-        return processedImage(source, metadata, baseRotation, colorMode, ExportQuality.BALANCED)
+        return processedImage(source, metadata, baseRotation, colorMode, ExportQuality.BALANCED, adjustments)
     }
 }
 
@@ -106,6 +108,7 @@ fun processedImage(
     rotation: Rotation,
     colorMode: ColorMode,
     exportQuality: ExportQuality,
+    adjustments: Adjustments = Adjustments.NEUTRAL,
 ): EncodedImage {
     val rotationDegrees = rotation.degrees
     var sourceMat: Mat? = null
@@ -114,7 +117,7 @@ fun processedImage(
         sourceMat = source.toMat()
         val quad = metadata.normalizedQuad.scaledTo(1, 1, sourceMat.width(), sourceMat.height())
         page = extractDocument(sourceMat, quad, rotationDegrees, colorMode, exportQuality.maxPixels(colorMode),
-            metadata.opticalMeasures)
+            metadata.opticalMeasures, adjustments)
         return encodeImage(page, colorMode, exportQuality)
     } finally {
         sourceMat?.release()
@@ -175,7 +178,7 @@ fun extractDocumentFromBitmap(
 }
 
 private fun encodeImage(image: Mat, colorMode: ColorMode, quality: ExportQuality): EncodedImage {
-    return if (colorMode == ColorMode.BLACK_AND_WHITE)
+    return if (colorMode.isBitonal)
         Png.fromMat(image)
     else
         Jpeg.fromMat(image, quality.jpegQuality)

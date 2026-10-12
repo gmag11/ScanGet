@@ -38,7 +38,7 @@ enum class ExportQuality(
         R.string.export_quality_high,
     );
     fun maxPixels(colorMode: ColorMode) =
-        if (colorMode == ColorMode.BLACK_AND_WHITE)
+        if (colorMode.isBitonal)
             maxPixels * 4
         else
             maxPixels

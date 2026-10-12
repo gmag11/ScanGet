@@ -51,7 +51,6 @@ import org.fairscan.app.domain.jpegsToExport
 import org.fairscan.app.domain.pagesToExport
 import org.fairscan.app.ui.screens.settings.ExportFormat
 import org.fairscan.app.ui.screens.settings.ExportFormat.PDF
-import org.fairscan.imageprocessing.ColorMode
 import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
@@ -161,7 +160,7 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
             preparationJob = launch {
                 val ocrActivation = if (exportFormat == PDF) ocrLanguageString.isNotEmpty() else null
                 val blackAndWhiteAsJpeg = exportFormat == ExportFormat.JPEG &&
-                    currentPageKeys.any { it.colorMode == ColorMode.BLACK_AND_WHITE }
+                    currentPageKeys.any { it.colorMode?.isBitonal == true }
                 _uiState.update {
                     ExportUiState(
                         filename = it.filename,

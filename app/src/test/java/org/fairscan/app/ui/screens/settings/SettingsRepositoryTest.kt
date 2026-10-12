@@ -15,6 +15,7 @@
 package org.fairscan.app.ui.screens.settings
 
 import org.assertj.core.api.Assertions.assertThat
+import org.fairscan.imageprocessing.ColorMode
 import org.fairscan.app.ui.screens.settings.DefaultFilenameStyle.SCAN_DATE_TIME
 import org.fairscan.app.ui.screens.settings.DefaultFilenameStyle.DATE
 import org.junit.Test
@@ -35,4 +36,36 @@ class SettingsRepositoryTest {
         assertThat(DATE.filename(dec31)).isEqualTo("2025-12-31")
     }
 
+    @Test
+    fun every_filter_can_be_the_default_filter() {
+        val filters = DefaultColorMode.entries.mapNotNull { it.colorMode }
+        assertThat(filters).containsExactlyInAnyOrderElementsOf(ColorMode.entries)
+        assertThat(DefaultColorMode.entries.count { it.colorMode == null }).isEqualTo(1)
+        assertThat(DefaultColorMode.AUTO.colorMode).isNull()
+    }
+
+    @Test
+    fun default_filter_entries_have_distinct_labels() {
+        val labels = DefaultColorMode.entries.map { it.labelResource }
+        assertThat(labels.toSet()).hasSameSizeAs(labels)
+    }
+
+    @Test
+    fun stored_default_filter_names_are_read_back() {
+        for (mode in DefaultColorMode.entries) {
+            assertThat(parseDefaultColorMode(mode.name)).isEqualTo(mode)
+        }
+        // Values stored by earlier versions.
+        assertThat(parseDefaultColorMode("AUTO")).isEqualTo(DefaultColorMode.AUTO)
+        assertThat(parseDefaultColorMode("COLOR")).isEqualTo(DefaultColorMode.COLOR)
+        assertThat(parseDefaultColorMode("GRAYSCALE")).isEqualTo(DefaultColorMode.GRAYSCALE)
+        assertThat(parseDefaultColorMode("BLACK_AND_WHITE")).isEqualTo(DefaultColorMode.BLACK_AND_WHITE)
+    }
+
+    @Test
+    fun unknown_or_missing_default_filter_falls_back_to_automatic() {
+        assertThat(parseDefaultColorMode(null)).isEqualTo(DefaultColorMode.AUTO)
+        assertThat(parseDefaultColorMode("")).isEqualTo(DefaultColorMode.AUTO)
+        assertThat(parseDefaultColorMode("SEPIA")).isEqualTo(DefaultColorMode.AUTO)
+    }
 }

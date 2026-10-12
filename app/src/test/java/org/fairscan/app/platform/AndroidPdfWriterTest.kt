@@ -16,6 +16,7 @@ package org.fairscan.app.platform
 
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.offset
+import org.fairscan.imageprocessing.ColorMode
 import org.junit.Test
 
 class AndroidPdfWriterTest {
@@ -59,6 +60,24 @@ class AndroidPdfWriterTest {
         val (w, h) = constrainToMaxFormat(297.0, 150.0)
         assertThat(w).isCloseTo(297.0, offset(0.001))
         assertThat(h).isCloseTo(150.0, offset(0.001))
+    }
+
+    @Test fun `only black and white is embedded as a bitonal image`() {
+        assertThat(pdfImageEncoding(ColorMode.BLACK_AND_WHITE)).isEqualTo(PdfImageEncoding.CCITT_G4)
+        val others = ColorMode.entries.filter { it != ColorMode.BLACK_AND_WHITE }
+        assertThat(others).isNotEmpty()
+        for (mode in others) {
+            assertThat(pdfImageEncoding(mode)).describedAs(mode.name).isEqualTo(PdfImageEncoding.JPEG)
+        }
+    }
+
+    @Test fun `new filters are embedded as continuous tone`() {
+        listOf(ColorMode.ORIGINAL, ColorMode.LIGHTEN, ColorMode.ENHANCE, ColorMode.NO_SHADOWS, ColorMode.NEGATIVE)
+            .forEach { assertThat(pdfImageEncoding(it)).describedAs(it.name).isEqualTo(PdfImageEncoding.JPEG) }
+    }
+
+    @Test fun `a page with no filter is embedded as continuous tone`() {
+        assertThat(pdfImageEncoding(null)).isEqualTo(PdfImageEncoding.JPEG)
     }
 
 }

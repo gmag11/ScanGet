@@ -17,6 +17,7 @@ package org.fairscan.app.data
 import org.fairscan.app.domain.EncodedImage
 import org.fairscan.app.domain.Jpeg
 import org.fairscan.app.domain.PageMetadata
+import org.fairscan.imageprocessing.Adjustments
 import org.fairscan.imageprocessing.ColorMode
 
 interface ImageTransformations {
@@ -28,7 +29,8 @@ interface ImageTransformations {
     fun process(
         source: Jpeg,
         metadata: PageMetadata,
-        colorMode: ColorMode
+        colorMode: ColorMode,
+        adjustments: Adjustments = Adjustments.NEUTRAL,
     ): EncodedImage
 
 }

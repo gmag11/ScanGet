@@ -32,6 +32,7 @@ import org.fairscan.app.domain.Rotation.R0
 import org.fairscan.app.domain.Rotation.R180
 import org.fairscan.app.domain.Rotation.R270
 import org.fairscan.app.domain.Rotation.R90
+import org.fairscan.imageprocessing.Adjustments
 import org.fairscan.imageprocessing.CameraIntrinsics
 import org.fairscan.imageprocessing.ColorMode
 import org.fairscan.imageprocessing.ColorMode.BLACK_AND_WHITE
@@ -70,7 +71,7 @@ class ImageRepositoryTest {
     fun repo(
         rotate: (EncodedImage, Int) -> EncodedImage = { input, _ -> input },
         resizeToThumbnail: (EncodedImage) -> Jpeg = { input -> jpeg(input.bytes[0]) },
-        process: (Jpeg, PageMetadata, ColorMode) -> Jpeg = { _, _, _ ->
+        process: (Jpeg, PageMetadata, ColorMode, Adjustments) -> Jpeg = { _, _, _, _ ->
             throw UnsupportedOperationException()
         }
     ): ImageRepository {
@@ -82,8 +83,9 @@ class ImageRepositoryTest {
             override fun process(
                 source: Jpeg,
                 metadata: PageMetadata,
-                colorMode: ColorMode
-            ): Jpeg = process(source, metadata, colorMode)
+                colorMode: ColorMode,
+                adjustments: Adjustments,
+            ): Jpeg = process(source, metadata, colorMode, adjustments)
         }
         val logger = Logger { _, _, _ -> }
         return ImageRepository(getFilesDir(), transformations, testScope, logger)
@@ -168,6 +170,87 @@ class ImageRepositoryTest {
     }
 
     @Test
+    fun `pages stored without adjustments load as neutral`() = runTest {
+        writeDocumentDotJson("""{"version":2,"pages":[{"id":"1","colorMode":"COLOR"}]}""")
+        File(processedDir(), "1.color.jpg").writeBytes(byteArrayOf(101))
+        val page = repo().pages().single()
+        assertThat(page.adjustments).isEqualTo(Adjustments.NEUTRAL)
+        assertThat(page.key().adjustments.isNeutral).isTrue()
+    }
+
+    @Test
+    fun `stored adjustments are loaded and are part of the page key`() = runTest {
+        val adjustments = Adjustments(brightness = 15, contrast = -20)
+        writeDocumentDotJson(
+            """{"version":2,"pages":[{"id":"1","colorMode":"COLOR","adjustments":{"brightness":15,"contrast":-20}}]}""")
+        File(processedDir(), "1.color.a${adjustments.hash()}.jpg").writeBytes(byteArrayOf(101))
+        val page = repo().pages().single()
+        assertThat(page.adjustments).isEqualTo(adjustments)
+        assertThat(page.key().adjustments).isEqualTo(page.adjustments)
+        assertThat(page.key()).isNotEqualTo(page.copy(adjustments = Adjustments.NEUTRAL).key())
+    }
+
+    @Test
+    fun `neutral pages keep the file names used before adjustments existed`() = runTest {
+        val repo = repo(process = { _, _, _, _ -> jpeg(41) })
+        repo.add(jpeg(10), jpeg(20), metadata1, COLOR)
+        val id = repo.imageIds().first()
+        assertThat(File(processedDir(), "$id.color.jpg")).exists()
+
+        repo.setRendering(id, GRAYSCALE, Adjustments.NEUTRAL)
+        assertThat(File(processedDir(), "$id.grayscale.jpg")).exists()
+        assertThat(processedDir().list()!!.filter { ".a" in it.removePrefix(id) }).isEmpty()
+    }
+
+    @Test
+    fun `adjustments add a hash to the file name and different adjustments use different files`() = runTest {
+        val a = Adjustments(brightness = 20)
+        val b = Adjustments(brightness = 21)
+        writeDocumentDotJson(
+            """{"version":2,"pages":[{"id":"1","colorMode":"COLOR","adjustments":{"brightness":20}}]}""")
+        File(processedDir(), "1.color.a${a.hash()}.jpg").writeBytes(byteArrayOf(55))
+        val repo = repo()
+
+        assertThat(repo.imageIds()).containsExactly("1")
+        val keyA = PageViewKey("1", R0, COLOR, 0, a)
+        assertThat(repo.image(keyA)?.bytes).isEqualTo(byteArrayOf(55))
+        assertThat(a.hash()).isNotEqualTo(b.hash())
+        assertThat(repo.image(PageViewKey("1", R0, COLOR, 0, b))).isNull()
+        assertThat(repo.image(PageViewKey("1", R0, COLOR, 0, Adjustments.NEUTRAL))).isNull()
+    }
+
+    @Test
+    fun `adjustments and crop version are both part of the file name`() = runTest {
+        val a = Adjustments(contrast = -30)
+        writeDocumentDotJson(
+            """{"version":2,"pages":[{"id":"1","colorMode":"COLOR","quadVersion":2,"adjustments":{"contrast":-30}}]}""")
+        File(processedDir(), "1.color.q2.a${a.hash()}.jpg").writeBytes(byteArrayOf(56))
+        val repo = repo()
+        assertThat(repo.imageIds()).containsExactly("1")
+        assertThat(repo.image(PageViewKey("1", R0, COLOR, 2, a))?.bytes).isEqualTo(byteArrayOf(56))
+    }
+
+    @Test
+    fun `a page whose adjusted file is missing is dropped at initialization`() = runTest {
+        writeDocumentDotJson(
+            """{"version":2,"pages":[{"id":"1","colorMode":"COLOR","adjustments":{"brightness":20}}]}""")
+        // Only the neutral rendering exists: it does not match the stored adjustments.
+        File(processedDir(), "1.color.jpg").writeBytes(byteArrayOf(55))
+        assertThat(repo().imageIds()).isEmpty()
+    }
+
+    @Test
+    fun `deleting a page removes its adjusted files too`() = runTest {
+        val a = Adjustments(brightness = 20)
+        writeDocumentDotJson(
+            """{"version":2,"pages":[{"id":"1","colorMode":"COLOR","adjustments":{"brightness":20}}]}""")
+        File(processedDir(), "1.color.a${a.hash()}.jpg").writeBytes(byteArrayOf(55))
+        val repo = repo()
+        repo.delete("1")
+        assertThat(jpegFiles(processedDir())!!.toList()).isEmpty()
+    }
+
+    @Test
     fun `should filter pages in json at initialization`() = runTest {
         writeDocumentDotJson("""{"pages":[{"file":"1.jpg"}, {"file":"2.jpg"}]}""")
         File(processedDir(), "2.jpg").writeBytes(byteArrayOf(101, 102, 103))
@@ -247,10 +330,10 @@ class ImageRepositoryTest {
     }
 
     @Test
-    fun setColorMode_should_process_and_update_metadata() = runTest {
+    fun setRendering_should_process_and_update_metadata() = runTest {
         val jpeg1 = jpeg(10)
         val repo = repo(
-            process = { _,  _, mode ->
+            process = { _,  _, mode, _ ->
                 assertThat(mode).isEqualTo(GRAYSCALE)
                 jpeg(41)
             }
@@ -258,17 +341,17 @@ class ImageRepositoryTest {
         repo.add(jpeg1, jpeg(20), metadata1, COLOR)
         assertThat(repo.pages().first().colorMode).isEqualTo(COLOR)
         val id = repo.pages().first().id
-        repo.setColorMode(id, GRAYSCALE)
+        repo.setRendering(id, GRAYSCALE, Adjustments.NEUTRAL)
         assertThat(repo.pages().first().colorMode).isEqualTo(GRAYSCALE)
         val key = PageViewKey(id, R0, GRAYSCALE, 0)
         assertThat(repo.image(key)?.bytes).isEqualTo(byteArrayOf(41))
     }
 
     @Test
-    fun setColorMode_should_not_run_twice_in_parallel() = runTest {
+    fun setRendering_should_not_run_twice_in_parallel() = runTest {
         var processCalls = 0
         val repo = repo(
-            process = { _, _, _ ->
+            process = { _, _, _, _ ->
                 processCalls++
                 runBlocking { delay(10) }
                 jpeg(1)
@@ -277,8 +360,8 @@ class ImageRepositoryTest {
         repo.add(jpeg(10), jpeg(20), metadata1, COLOR)
         val id = repo.imageIds().first()
         coroutineScope {
-            launch { repo.setColorMode(id, GRAYSCALE) }
-            launch { repo.setColorMode(id, GRAYSCALE) }
+            launch { repo.setRendering(id, GRAYSCALE, Adjustments.NEUTRAL) }
+            launch { repo.setRendering(id, GRAYSCALE, Adjustments.NEUTRAL) }
         }
         val key = PageViewKey(id, R0, GRAYSCALE, 0)
         assertThat(repo.image(key)?.bytes).isEqualTo(byteArrayOf(1))
@@ -286,10 +369,110 @@ class ImageRepositoryTest {
     }
 
     @Test
-    fun setColorMode_unknown_id_should_do_nothing() = runTest {
+    fun setRendering_unknown_id_should_do_nothing() = runTest {
         val repo = repo()
-        repo.setColorMode("x", GRAYSCALE)
+        repo.setRendering("x", GRAYSCALE, Adjustments.NEUTRAL)
         assertThat(repo.imageIds()).isEmpty()
+    }
+
+    @Test
+    fun `setRendering stores adjustments, renders with them and uses a hashed file`() = runTest {
+        val adjustments = Adjustments(brightness = 30, contrast = -10)
+        var received: Adjustments? = null
+        val repo = repo(process = { _, _, _, adj -> received = adj; jpeg(77) })
+        repo.add(jpeg(10), jpeg(20), metadata1, COLOR)
+        val id = repo.imageIds().first()
+
+        repo.setRendering(id, COLOR, adjustments)
+
+        assertThat(received).isEqualTo(adjustments)
+        val page = repo.pages().first()
+        assertThat(page.adjustments).isEqualTo(adjustments)
+        assertThat(repo.image(page.key())?.bytes).isEqualTo(byteArrayOf(77))
+        assertThat(File(processedDir(), "$id.color.a${adjustments.hash()}.jpg")).exists()
+        // The new state is persisted: a new repository loads the same page.
+        assertThat(repo().pages().first().adjustments).isEqualTo(adjustments)
+    }
+
+    @Test
+    fun `setRendering neutralizes the controls the filter does not expose`() = runTest {
+        var received: Adjustments? = null
+        val repo = repo(process = { _, _, _, adj -> received = adj; jpeg(78) })
+        repo.add(jpeg(10), jpeg(20), metadata1, COLOR)
+        val id = repo.imageIds().first()
+
+        repo.setRendering(id, BLACK_AND_WHITE, Adjustments(brightness = 50, saturation = 20, threshold = 30))
+
+        assertThat(received).isEqualTo(Adjustments(threshold = 30))
+        assertThat(repo.pages().first().adjustments).isEqualTo(Adjustments(threshold = 30))
+    }
+
+    @Test
+    fun `switching filter with neutral adjustments resets the page adjustments`() = runTest {
+        val repo = repo(process = { _, _, _, _ -> jpeg(79) })
+        repo.add(jpeg(10), jpeg(20), metadata1, COLOR)
+        val id = repo.imageIds().first()
+        repo.setRendering(id, COLOR, Adjustments(contrast = 40))
+        assertThat(repo.pages().first().adjustments).isEqualTo(Adjustments(contrast = 40))
+
+        repo.setRendering(id, GRAYSCALE, Adjustments.NEUTRAL)
+
+        val page = repo.pages().first()
+        assertThat(page.colorMode).isEqualTo(GRAYSCALE)
+        assertThat(page.adjustments).isEqualTo(Adjustments.NEUTRAL)
+        assertThat(File(processedDir(), "$id.grayscale.jpg")).exists()
+    }
+
+    @Test
+    fun `setRendering keeps the crop of the page`() = runTest {
+        val repo = repo(process = { _, _, _, _ -> jpeg(80) })
+        repo.add(jpeg(10), jpeg(20), metadata1, COLOR)
+        val id = repo.imageIds().first()
+        repo.setUserQuad(id, quad1)
+        val before = repo.pages().first()
+        assertThat(before.quadVersion).isEqualTo(1)
+
+        repo.setRendering(id, COLOR, Adjustments(brightness = 10))
+
+        val after = repo.pages().first()
+        assertThat(after.quadVersion).isEqualTo(1)
+        assertThat(File(processedDir(), "$id.color.q1.a${Adjustments(brightness = 10).hash()}.jpg")).exists()
+    }
+
+    @Test
+    fun `committing a rendering deletes the other adjusted files of the page but keeps neutral ones`() = runTest {
+        val repo = repo(process = { _, _, _, _ -> jpeg(81) })
+        repo.add(jpeg(10), jpeg(20), metadata1, COLOR)
+        val id = repo.imageIds().first()
+        val a = Adjustments(brightness = 10)
+        val b = Adjustments(brightness = 20)
+        val c = Adjustments(brightness = 30)
+
+        repo.setRendering(id, COLOR, a)
+        repo.setRendering(id, COLOR, b)
+        repo.setRendering(id, GRAYSCALE, Adjustments.NEUTRAL)
+        repo.setRendering(id, COLOR, c)
+
+        val names = processedDir().list()!!.filter { it.startsWith("$id.") }.toSet()
+        assertThat(names).contains("$id.color.jpg", "$id.grayscale.jpg", "$id.color.a${c.hash()}.jpg")
+        assertThat(names).doesNotContain("$id.color.a${a.hash()}.jpg", "$id.color.a${b.hash()}.jpg")
+    }
+
+    @Test
+    fun `files of other pages are not touched when cleaning adjusted files`() = runTest {
+        val repo = repo(process = { _, _, _, _ -> jpeg(82) })
+        repo.add(jpeg(10), jpeg(20), metadata1, COLOR)
+        val first = repo.imageIds().first()
+        repo.setRendering(first, COLOR, Adjustments(contrast = 5))
+        // Make sure the second page gets another id.
+        Thread.sleep(2)
+        repo.add(jpeg(11), jpeg(21), metadata1, COLOR)
+        val second = repo.imageIds().last()
+        assertThat(second).isNotEqualTo(first)
+
+        repo.setRendering(second, COLOR, Adjustments(contrast = 6))
+
+        assertThat(File(processedDir(), "$first.color.a${Adjustments(contrast = 5).hash()}.jpg")).exists()
     }
 
     @Test

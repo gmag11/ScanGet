@@ -82,7 +82,7 @@ suspend fun pagesToExport(
                 val colorMode = page.colorMode
                 if (source != null && metadata != null && colorMode != null) {
                     val rotation = page.totalRotation()
-                    processedImage(source, metadata, rotation, colorMode, exportQuality)
+                    processedImage(source, metadata, rotation, colorMode, exportQuality, page.adjustments)
                 }
                 else
                     image(page, imageRepository)

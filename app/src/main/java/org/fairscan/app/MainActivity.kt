@@ -64,6 +64,7 @@ import org.fairscan.app.ui.screens.camera.CameraEvent
 import org.fairscan.app.ui.screens.camera.CameraScreen
 import org.fairscan.app.ui.screens.camera.CameraViewModel
 import org.fairscan.app.ui.screens.crop.CropScreen
+import org.fairscan.app.ui.screens.document.AdjustmentActions
 import org.fairscan.app.ui.screens.document.DocumentScreen
 import org.fairscan.app.ui.screens.export.ExportActions
 import org.fairscan.app.ui.screens.export.ExportEvent
@@ -130,6 +131,7 @@ class MainActivity : ComponentActivity() {
             val importState by cameraViewModel.importState.collectAsStateWithLifecycle()
             val document by viewModel.documentUiModel.collectAsStateWithLifecycle()
             val documentUiState by viewModel.documentUiState.collectAsStateWithLifecycle()
+            val adjustmentState by viewModel.adjustmentState.collectAsStateWithLifecycle()
             val cropInitialState by viewModel.cropInitState.collectAsStateWithLifecycle()
             val exportUiState by exportViewModel.uiState.collectAsStateWithLifecycle()
             val settingsUiState by settingsViewModel.uiState.collectAsStateWithLifecycle()
@@ -213,7 +215,16 @@ class MainActivity : ComponentActivity() {
                             onColorModeSelected = { viewModel.setCurrentPageColorMode(it) },
                             onCropClick = { viewModel.onClickOnCropButton() },
                             onPageReorder = { id, newIndex -> viewModel.movePage(id, newIndex) },
-                            onPageSelected = viewModel::onPageSelected
+                            onPageSelected = viewModel::onPageSelected,
+                            adjustmentState = adjustmentState,
+                            adjustmentActions = AdjustmentActions(
+                                onStart = viewModel::startAdjusting,
+                                onChange = viewModel::setAdjustment,
+                                onReset = viewModel::resetAdjustments,
+                                onApplyToAll = viewModel::applyAdjustmentsToAll,
+                                onCancel = viewModel::cancelAdjusting,
+                                onConfirm = viewModel::confirmAdjusting,
+                            ),
                         )
                     }
                     is Screen.Main.Export -> {

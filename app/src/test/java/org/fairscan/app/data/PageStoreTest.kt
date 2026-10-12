@@ -62,6 +62,18 @@ class PageStoreTest {
     }
 
     @Test
+    fun update_keeps_adjustments() {
+        val adjustments = AdjustmentsV1(contrast = 25)
+        val store = PageStore(listOf(page1, page2))
+        store.update(page1.id) { it.copy(adjustments = adjustments) }
+        assertThat(store.get(page1.id)!!.adjustments).isEqualTo(adjustments)
+        assertThat(store.get(page2.id)!!.adjustments).isNull()
+        // Other updates must not drop them.
+        store.update(page1.id) { it.copy(quadVersion = 1) }
+        assertThat(store.get(page1.id)!!.adjustments).isEqualTo(adjustments)
+    }
+
+    @Test
     fun delete() {
         val store = PageStore(listOf(page1, page2))
         assertThat(store.pages()).containsExactly(page1, page2)

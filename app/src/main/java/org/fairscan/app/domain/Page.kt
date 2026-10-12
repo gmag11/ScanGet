@@ -14,6 +14,7 @@
  */
 package org.fairscan.app.domain
 
+import org.fairscan.imageprocessing.Adjustments
 import org.fairscan.imageprocessing.ColorMode
 import org.fairscan.imageprocessing.ImageSize
 import org.fairscan.imageprocessing.OpticalMeasures
@@ -33,8 +34,9 @@ data class ScanPage(
     val colorMode: ColorMode?,
     val quadVersion: Int,
     val metadata: PageMetadata?,
+    val adjustments: Adjustments = Adjustments.NEUTRAL,
 ) {
-    fun key() = PageViewKey(id, manualRotation, colorMode, quadVersion)
+    fun key() = PageViewKey(id, manualRotation, colorMode, quadVersion, adjustments)
     fun totalRotation() = manualRotation.add(metadata?.baseRotation ?: Rotation.R0)
 }
 
@@ -43,6 +45,7 @@ data class PageViewKey(
     val rotation: Rotation,
     val colorMode: ColorMode?,
     val quadVersion: Int,
+    val adjustments: Adjustments = Adjustments.NEUTRAL,
 )
 enum class Rotation(val degrees: Int) {
     R0(0),

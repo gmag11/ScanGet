@@ -1,6 +1,22 @@
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <!-- About screen: title. It's also an item of the ⋮ menu -->
     <string name="about">About</string>
+    <!-- Document screen: content description of the button that opens the adjustments panel -->
+    <string name="adjust" tools:ignore="MissingTranslation">Adjust</string>
+    <!-- Adjustments panel: title -->
+    <string name="adjustments" tools:ignore="MissingTranslation">Adjustments</string>
+    <!-- Adjustments panel: sets every slider back to its neutral value -->
+    <string name="adjustments_reset" tools:ignore="MissingTranslation">Reset</string>
+    <!-- Adjustments panel: gives every page of the document the same filter and adjustments -->
+    <string name="adjustments_apply_to_all" tools:ignore="MissingTranslation">Apply to all pages</string>
+    <!-- Adjustments panel: slider labels -->
+    <string name="adjustment_brightness" tools:ignore="MissingTranslation">Brightness</string>
+    <string name="adjustment_contrast" tools:ignore="MissingTranslation">Contrast</string>
+    <string name="adjustment_saturation" tools:ignore="MissingTranslation">Saturation</string>
+    <string name="adjustment_detail" tools:ignore="MissingTranslation">Detail</string>
+    <string name="adjustment_shadow_removal" tools:ignore="MissingTranslation">Shadow removal</string>
+    <!-- Black and white filter: the lower the threshold, the more of the page stays white -->
+    <string name="adjustment_threshold" tools:ignore="MissingTranslation">Threshold</string>
     <!-- Button in the Document screen -->
     <string name="add_page">Add page</string>
     <!-- Header in the About screen -->
@@ -41,6 +57,21 @@
     <string name="color_mode_color">Color</string>
     <!-- Settings screen -->
     <string name="color_mode_default">Default filter</string>
+    <!-- Settings screen: value for "default filter". Document screen: dropdown menu for filter.
+         Brighter paper and more contrast, keeping colors. -->
+    <string name="color_mode_lighten" tools:ignore="MissingTranslation">Lighten</string>
+    <!-- Settings screen: value for "default filter". Document screen: dropdown menu for filter.
+         Automatic white balance and contrast, keeping colors. -->
+    <string name="color_mode_enhance" tools:ignore="MissingTranslation">Enhance</string>
+    <!-- Settings screen: value for "default filter". Document screen: dropdown menu for filter.
+         Removes shadows and uneven lighting, keeping colors. -->
+    <string name="color_mode_no_shadows" tools:ignore="MissingTranslation">No shadows</string>
+    <!-- Settings screen: value for "default filter". Document screen: dropdown menu for filter.
+         The cropped photo with no enhancement. -->
+    <string name="color_mode_original" tools:ignore="MissingTranslation">Original</string>
+    <!-- Settings screen: value for "default filter". Document screen: dropdown menu for filter.
+         Inverted grayscale: light text on a dark background. -->
+    <string name="color_mode_negative" tools:ignore="MissingTranslation">Negative</string>
     <!-- Settings screen: value for "default filter". Document screen: dropdown menu for filter -->
     <string name="color_mode_grayscale">Grayscale</string>
     <!-- About screen -->

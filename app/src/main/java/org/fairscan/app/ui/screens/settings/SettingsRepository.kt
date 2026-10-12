@@ -47,15 +47,7 @@ class SettingsRepository(
     private val EXPORT_QUALITY = stringPreferencesKey("export_quality")
 
     val defaultColorMode: Flow<DefaultColorMode> =
-        dataStore.data.map { prefs ->
-            when (prefs[DEFAULT_COLOR_MODE]) {
-                "AUTO" -> DefaultColorMode.AUTO
-                "COLOR" -> DefaultColorMode.COLOR
-                "GRAYSCALE" -> DefaultColorMode.GRAYSCALE
-                "BLACK_AND_WHITE" -> DefaultColorMode.BLACK_AND_WHITE
-                else -> DefaultColorMode.AUTO
-            }
-        }
+        dataStore.data.map { prefs -> parseDefaultColorMode(prefs[DEFAULT_COLOR_MODE]) }
 
     val exportDirUri: Flow<String?> =
         dataStore.data.map { prefs ->
@@ -135,12 +127,22 @@ class SettingsRepository(
     }
 }
 
+// Automatic plus every filter, in the order of the filter menu of the Document screen.
+// A value stored under its name keeps working: new filters only add entries.
 enum class DefaultColorMode(val colorMode: ColorMode?, val labelResource: Int) {
     AUTO(null, R.string.color_mode_auto),
+    ORIGINAL(ColorMode.ORIGINAL, R.string.color_mode_original),
     COLOR(ColorMode.COLOR, R.string.color_mode_color),
+    LIGHTEN(ColorMode.LIGHTEN, R.string.color_mode_lighten),
+    ENHANCE(ColorMode.ENHANCE, R.string.color_mode_enhance),
+    NO_SHADOWS(ColorMode.NO_SHADOWS, R.string.color_mode_no_shadows),
     GRAYSCALE(ColorMode.GRAYSCALE, R.string.color_mode_grayscale),
     BLACK_AND_WHITE(ColorMode.BLACK_AND_WHITE, R.string.color_mode_black_and_white),
+    NEGATIVE(ColorMode.NEGATIVE, R.string.color_mode_negative),
 }
+
+internal fun parseDefaultColorMode(stored: String?): DefaultColorMode =
+    DefaultColorMode.entries.firstOrNull { it.name == stored } ?: DefaultColorMode.AUTO
 
 enum class ExportFormat(val mimeType: String) {
     PDF("application/pdf"),

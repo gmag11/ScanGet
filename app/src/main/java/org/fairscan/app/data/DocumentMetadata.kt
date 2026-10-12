@@ -15,6 +15,7 @@
 package org.fairscan.app.data
 
 import kotlinx.serialization.Serializable
+import org.fairscan.imageprocessing.Adjustments
 import org.fairscan.imageprocessing.ColorMode
 
 @Serializable
@@ -49,7 +50,29 @@ data class PageV2(
     val subjectDistance: Float? = null,
     val sourceWidth: Int? = null,
     val sourceHeight: Int? = null,
+    // Null means neutral adjustments, which is also what pages saved before adjustments existed have.
+    val adjustments: AdjustmentsV1? = null,
 )
+
+@Serializable
+data class AdjustmentsV1(
+    val brightness: Int = 0,
+    val contrast: Int = 0,
+    val saturation: Int = 0,
+    val detail: Int = 0,
+    val shadowRemoval: Int = 0,
+    val threshold: Int = 0,
+)
+
+/** Neutral adjustments are stored as null, so that untouched pages keep the same JSON as before. */
+fun Adjustments.toSerializable(): AdjustmentsV1? =
+    if (isNeutral) null
+    else AdjustmentsV1(brightness, contrast, saturation, detail, shadowRemoval, threshold)
+
+/** Values come from a file on disk, so they are clamped instead of rejected. */
+fun AdjustmentsV1?.toAdjustments(): Adjustments =
+    if (this == null) Adjustments.NEUTRAL
+    else Adjustments.coerced(brightness, contrast, saturation, detail, shadowRemoval, threshold)
 
 @Serializable
 data class NormalizedQuad(

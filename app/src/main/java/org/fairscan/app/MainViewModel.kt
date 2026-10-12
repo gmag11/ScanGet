@@ -21,6 +21,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -41,20 +42,25 @@ import org.fairscan.app.data.Logger
 import org.fairscan.app.domain.CapturedPage
 import org.fairscan.app.domain.Rotation
 import org.fairscan.app.domain.ScanPage
+import org.fairscan.app.platform.PreviewRenderer
 import org.fairscan.app.ui.NavigationState
 import org.fairscan.app.ui.Screen
 import org.fairscan.app.ui.screens.crop.CropInitState
 import org.fairscan.app.ui.screens.document.CurrentPageUiState
+import org.fairscan.app.ui.screens.document.AdjustmentSession
+import org.fairscan.app.ui.screens.document.AdjustmentState
 import org.fairscan.app.ui.screens.document.DocumentUiState
 import org.fairscan.app.ui.state.DocumentUiModel
 import org.fairscan.app.ui.state.PageThumbnail
+import org.fairscan.imageprocessing.AdjustmentControl
+import org.fairscan.imageprocessing.Adjustments
 import org.fairscan.imageprocessing.ColorMode
 import org.fairscan.imageprocessing.ImageSize
 import org.fairscan.imageprocessing.Quad
 import kotlin.math.min
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class MainViewModel(val imageRepository: ImageRepository, logger: Logger): ViewModel() {
+class MainViewModel(val imageRepository: ImageRepository, private val logger: Logger): ViewModel() {
 
     private val _navigationState = MutableStateFlow<NavigationState?>(null)
     val currentScreen: StateFlow<Screen?> = _navigationState.map { it?.current }
@@ -94,15 +100,17 @@ class MainViewModel(val imageRepository: ImageRepository, logger: Logger): ViewM
         )
 
     private val _currentPageIndex = MutableStateFlow(0)
-    private val _loadingPageId = MutableStateFlow<String?>(null)
+    // Pages that are being rendered. Several can be at once with "apply to all".
+    private val _loadingPageIds = MutableStateFlow<Set<String>>(emptySet())
+    val loadingPageIds: StateFlow<Set<String>> = _loadingPageIds
     private val currentPageUiState: Flow<CurrentPageUiState?> =
-        combine(_currentPageIndex, _pages, _loadingPageId) { index, pages, loadingId ->
+        combine(_currentPageIndex, _pages, _loadingPageIds) { index, pages, loadingIds ->
             val page = pages.getOrNull(index)
-            Pair(page, loadingId)
+            Pair(page, loadingIds)
         }
-            .mapLatest { (page,loadingId) ->
+            .mapLatest { (page, loadingIds) ->
                 page?.let {
-                    val isLoading = (it.id == loadingId)
+                    val isLoading = it.id in loadingIds
                     val canBeCropped = page.metadata != null
                     val bitmap = try {
                          imageRepository.image(it.key())?.toBitmap()
@@ -129,6 +137,8 @@ class MainViewModel(val imageRepository: ImageRepository, logger: Logger): ViewM
     }
 
     fun navigateTo(destination: Screen) {
+        // The adjustments panel belongs to the Document screen.
+        if (destination !is Screen.Main.Document) cancelAdjusting()
         if (destination is Screen.Main.Document) {
             require(_pages.value.isNotEmpty()) {
                 "Cannot navigate to DocumentScreen with zero pages"
@@ -139,6 +149,7 @@ class MainViewModel(val imageRepository: ImageRepository, logger: Logger): ViewM
     }
 
     fun navigateBack() {
+        cancelAdjusting()
         _navigationState.update { stack -> stack?.navigateBack() }
     }
 
@@ -183,15 +194,153 @@ class MainViewModel(val imageRepository: ImageRepository, logger: Logger): ViewM
         viewModelScope.launch {
             val currentPage = currentPage()
             if (currentPage.colorMode != colorMode) {
-                _loadingPageId.value = currentPage.id
+                _loadingPageIds.update { it + currentPage.id }
                 val pages = withContext(Dispatchers.IO) {
-                    imageRepository.setColorMode(currentPage.id, colorMode)
+                    imageRepository.setRendering(currentPage.id, colorMode, Adjustments.NEUTRAL)
                     imageRepository.pages()
                 }
                 _pages.value = pages
-                _loadingPageId.value = null
+                _loadingPageIds.update { it - currentPage.id }
             }
         }
+    }
+
+    // --- Adjustments panel ---
+
+    private val _adjustmentState = MutableStateFlow<AdjustmentState<Bitmap>?>(null)
+    /** Null when the adjustments panel is not open. */
+    val adjustmentState: StateFlow<AdjustmentState<Bitmap>?> = _adjustmentState
+
+    private var adjustmentSession: AdjustmentSession<Bitmap>? = null
+    private var previewRenderer: PreviewRenderer? = null
+    private var adjustmentJob: Job? = null
+    private var adjustingPageId: String? = null
+
+    /** Opens the adjustments panel for the current page. */
+    fun startAdjusting() {
+        if (adjustingPageId != null) return
+        val page = currentPage()
+        if (page.id in _loadingPageIds.value) return
+        val metadata = page.metadata ?: return
+        val colorMode = page.colorMode ?: return
+        adjustingPageId = page.id
+        adjustmentJob = viewModelScope.launch {
+            val source = withContext(Dispatchers.IO) { imageRepository.source(page.id) }
+            if (source == null) {
+                adjustingPageId = null
+                return@launch
+            }
+            val renderer = PreviewRenderer(source, metadata, page.manualRotation)
+            val session = AdjustmentSession<Bitmap>(
+                colorMode = colorMode,
+                initial = page.adjustments,
+                scope = viewModelScope,
+                onError = { logger.e("MainViewModel", "Failed to render the preview of ${page.id}", it) },
+            ) { mode, adjustments -> renderer.render(mode, adjustments) }
+            previewRenderer = renderer
+            adjustmentSession = session
+            launch { session.state.collect { _adjustmentState.value = it } }
+            session.start()
+        }
+    }
+
+    fun setAdjustment(control: AdjustmentControl, value: Int) {
+        adjustmentSession?.set(control, value)
+    }
+
+    fun resetAdjustments() {
+        adjustmentSession?.reset()
+    }
+
+    /** Closes the panel and keeps the page as it was. */
+    fun cancelAdjusting() {
+        adjustmentSession?.cancel()
+        closeAdjustmentSession()
+    }
+
+    /** Closes the panel and renders the page at full resolution with the chosen adjustments. */
+    fun confirmAdjusting() {
+        val session = adjustmentSession
+        val pageId = adjustingPageId
+        if (session == null || pageId == null) {
+            closeAdjustmentSession()
+            return
+        }
+        val adjustments = session.confirm()
+        closeAdjustmentSession()
+        val page = _pages.value.firstOrNull { it.id == pageId } ?: return
+        val colorMode = page.colorMode ?: return
+        if (adjustments == page.adjustments.forMode(colorMode)) return
+        viewModelScope.launch {
+            _loadingPageIds.update { it + pageId }
+            val pages = withContext(Dispatchers.IO) {
+                imageRepository.setRendering(pageId, colorMode, adjustments)
+                imageRepository.pages()
+            }
+            _pages.value = pages
+            _loadingPageIds.update { it - pageId }
+        }
+    }
+
+    /**
+     * Closes the panel and gives every page of the document the filter and adjustments of the
+     * current one. The current page is rendered first.
+     */
+    fun applyAdjustmentsToAll() {
+        val session = adjustmentSession
+        val pageId = adjustingPageId
+        if (session == null || pageId == null) {
+            closeAdjustmentSession()
+            return
+        }
+        val adjustments = session.confirm()
+        closeAdjustmentSession()
+        val colorMode = _pages.value.firstOrNull { it.id == pageId }?.colorMode ?: return
+        viewModelScope.launch { applyRenderingToAll(pageId, colorMode, adjustments) }
+    }
+
+    /**
+     * Renders every page with [colorMode] and [adjustments], one after the other, [firstPageId]
+     * first. Each page shows as loading until its rendering is ready. A page that fails is logged
+     * and the others still get processed.
+     */
+    suspend fun applyRenderingToAll(firstPageId: String, colorMode: ColorMode, adjustments: Adjustments) {
+        val ids = withContext(Dispatchers.IO) { imageRepository.pages() }.map { it.id }
+        val ordered = listOf(firstPageId) + ids.filter { it != firstPageId }
+        _loadingPageIds.update { it + ordered }
+        try {
+            for (id in ordered) {
+                try {
+                    _pages.value = withContext(Dispatchers.IO) {
+                        imageRepository.setRendering(id, colorMode, adjustments)
+                        imageRepository.pages()
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logger.e("MainViewModel", "Failed to apply the rendering to $id", e)
+                } finally {
+                    _loadingPageIds.update { it - id }
+                }
+            }
+        } finally {
+            _loadingPageIds.update { it - ordered.toSet() }
+        }
+    }
+
+    private fun closeAdjustmentSession() {
+        adjustmentSession?.close()
+        adjustmentJob?.cancel()
+        previewRenderer?.close()
+        adjustmentSession = null
+        adjustmentJob = null
+        previewRenderer = null
+        adjustingPageId = null
+        _adjustmentState.value = null
+    }
+
+    override fun onCleared() {
+        closeAdjustmentSession()
     }
 
     fun setCurrentPageUserQuad(userQuad: Quad) {
@@ -200,13 +349,13 @@ class MainViewModel(val imageRepository: ImageRepository, logger: Logger): ViewM
             val totalRotation = currentPage.totalRotation()
             val rotateIterations = (4 - totalRotation.degrees / 90) % 4
             val newQuad = userQuad.rotate90(rotateIterations, ImageSize(1, 1))
-            _loadingPageId.value = currentPage.id
+            _loadingPageIds.update { it + currentPage.id }
             val pages = withContext(Dispatchers.IO) {
                 imageRepository.setUserQuad(currentPage.id, newQuad)
                 imageRepository.pages()
             }
             _pages.value = pages
-            _loadingPageId.value = null
+            _loadingPageIds.update { it - currentPage.id }
         }
     }
 

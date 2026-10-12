@@ -21,12 +21,14 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,6 +42,7 @@ import androidx.compose.material.icons.filled.FontDownload
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.RotateLeft
 import androidx.compose.material.icons.filled.RotateRight
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.ButtonDefaults
@@ -59,10 +62,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import android.graphics.Bitmap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -91,7 +96,12 @@ import org.fairscan.app.ui.theme.FairScanTheme
 import org.fairscan.imageprocessing.ColorMode
 import org.fairscan.imageprocessing.ColorMode.BLACK_AND_WHITE
 import org.fairscan.imageprocessing.ColorMode.COLOR
+import org.fairscan.imageprocessing.ColorMode.ENHANCE
 import org.fairscan.imageprocessing.ColorMode.GRAYSCALE
+import org.fairscan.imageprocessing.ColorMode.LIGHTEN
+import org.fairscan.imageprocessing.ColorMode.NEGATIVE
+import org.fairscan.imageprocessing.ColorMode.NO_SHADOWS
+import org.fairscan.imageprocessing.ColorMode.ORIGINAL
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -105,12 +115,18 @@ fun DocumentScreen(
     onCropClick: () -> Unit,
     onPageReorder: (String, Int) -> Unit,
     onPageSelected: (Int) -> Unit,
+    adjustmentState: AdjustmentState<Bitmap>? = null,
+    adjustmentActions: AdjustmentActions = AdjustmentActions(),
 ) {
     val showDeletePageDialog = rememberSaveable { mutableStateOf(false) }
 
     val document = uiState.document
     val currentPageIndex = uiState.currentPageIndex
-    BackHandler { navigation.back() }
+    // While the adjustments panel is open, going back closes it and the rest of the screen waits.
+    val adjusting = adjustmentState != null
+    BackHandler { if (adjusting) adjustmentActions.onCancel() else navigation.back() }
+    val screenNavigation =
+        if (adjusting) navigation.copy(back = adjustmentActions.onCancel) else navigation
 
     val listState = rememberLazyListState()
     LaunchedEffect(currentPageIndex) {
@@ -118,17 +134,17 @@ fun DocumentScreen(
     }
 
     MyScaffold(
-        navigation = navigation,
+        navigation = screenNavigation,
         pageListState = CommonPageListState(
             document,
-            onPageClick = { index -> onPageSelected(index) },
-            onPageReorder = onPageReorder,
+            onPageClick = { index -> if (!adjusting) onPageSelected(index) },
+            onPageReorder = { id, index -> if (!adjusting) onPageReorder(id, index) },
             currentPageIndex = currentPageIndex,
             listState = listState,
             showPageNumbers = true,
         ),
         bottomBar = {
-            BottomBar(onExportClick, navigation.toCameraScreen)
+            BottomBar(onExportClick, navigation.toCameraScreen, enabled = !adjusting)
         },
     ) { modifier ->
         DocumentPreview(
@@ -137,6 +153,8 @@ fun DocumentScreen(
             onRotateImage,
             onColorModeSelected,
             onCropClick,
+            adjustmentState,
+            adjustmentActions,
             modifier
         )
         if (showDeletePageDialog.value) {
@@ -156,65 +174,73 @@ private fun DocumentPreview(
     onRotateImage: (Boolean) -> Unit,
     onColorModeSelected: (ColorMode) -> Unit,
     onCropClick: () -> Unit,
+    adjustmentState: AdjustmentState<Bitmap>?,
+    adjustmentActions: AdjustmentActions,
     modifier: Modifier,
 ) {
     val currentPageIndex = uiState.currentPageIndex
     val document = uiState.document
+    val pageKey = uiState.currentPage?.key
     Column (
         modifier = modifier
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
     ) {
         Box (
-            modifier = Modifier.fillMaxSize()
+            modifier = if (adjustmentState != null) Modifier.weight(1f).fillMaxWidth() else Modifier.fillMaxSize()
         ) {
-            val bitmap = uiState.currentPage?.bitmap
-            val pageKey = uiState.currentPage?.key
-            if (bitmap != null && pageKey != null) {
-                val imageBitmap = bitmap.asImageBitmap()
-                val zoomState = remember(pageKey) {
-                    ZoomState(
-                        contentSize = Size(bitmap.width.toFloat(), bitmap.height.toFloat())
+            if (adjustmentState != null) {
+                // The preview has no tone applied: the color filter on top does it. Until the first
+                // preview is ready the page that is already rendered is shown, as it is.
+                val preview = adjustmentState.preview
+                val bitmap = preview ?: uiState.currentPage?.bitmap
+                if (bitmap != null && pageKey != null) {
+                    PageImage(
+                        bitmap = bitmap,
+                        pageKey = pageKey,
+                        colorFilter = preview?.let { toneColorFilter(adjustmentState.adjustments) },
                     )
                 }
-
-                Box(modifier = Modifier
-                    .fillMaxSize(0.92f)
-                    .align(Alignment.Center)) {
-                    Image(
-                        bitmap = imageBitmap,
-                        contentDescription = null,
+                if (adjustmentState.isRendering) {
+                    CircularProgressIndicator(
                         modifier = Modifier
-                            .padding(4.dp)
-                            .align(Alignment.Center)
-                            .zoomable(zoomState)
+                            .align(Alignment.TopEnd)
+                            .padding(16.dp)
+                            .size(24.dp),
+                        strokeWidth = 2.dp,
                     )
                 }
-            }
-            if (uiState.currentPage?.isLoading ?: false) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.4f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
+            } else {
+                val bitmap = uiState.currentPage?.bitmap
+                if (bitmap != null && pageKey != null) {
+                    PageImage(bitmap, pageKey, colorFilter = null)
                 }
+                if (uiState.currentPage?.isLoading ?: false) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.4f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                }
+                EditButtons(
+                    uiState,
+                    onColorModeSelected,
+                    onCropClick,
+                    adjustmentActions.onStart,
+                    modifier = Modifier.align(Alignment.BottomStart)
+                )
+                RotationButtons(onRotateImage, Modifier.align(Alignment.BottomCenter))
+                SecondaryActionButton(
+                    Icons.Outlined.Delete,
+                    contentDescription = stringResource(R.string.delete_page),
+                    onClick = { onDeleteImage() },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                )
             }
-            EditButtons(
-                uiState,
-                onColorModeSelected,
-                onCropClick,
-                modifier = Modifier.align(Alignment.BottomStart)
-            )
-            RotationButtons(onRotateImage, Modifier.align(Alignment.BottomCenter))
-            SecondaryActionButton(
-                Icons.Outlined.Delete,
-                contentDescription = stringResource(R.string.delete_page),
-                onClick = { onDeleteImage() },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(8.dp)
-            )
             Text("${currentPageIndex + 1} / ${document.pageCount()}",
                 color = MaterialTheme.colorScheme.inverseOnSurface,
                 modifier = Modifier
@@ -227,6 +253,38 @@ private fun DocumentPreview(
                     .padding(horizontal = 8.dp, vertical = 2.dp)
             )
         }
+        if (adjustmentState != null) {
+            AdjustmentsPanel(adjustmentState, adjustmentActions)
+        }
+    }
+}
+
+@Composable
+private fun BoxScope.PageImage(
+    bitmap: Bitmap,
+    pageKey: PageViewKey,
+    colorFilter: ColorFilter?,
+) {
+    val imageBitmap = bitmap.asImageBitmap()
+    // The zoom is kept while the same page is re-rendered, even if its bitmap changes size.
+    val zoomState = remember(pageKey.pageId, bitmap.width, bitmap.height) {
+        ZoomState(
+            contentSize = Size(bitmap.width.toFloat(), bitmap.height.toFloat())
+        )
+    }
+
+    Box(modifier = Modifier
+        .fillMaxSize(0.92f)
+        .align(Alignment.Center)) {
+        Image(
+            bitmap = imageBitmap,
+            contentDescription = null,
+            colorFilter = colorFilter,
+            modifier = Modifier
+                .padding(4.dp)
+                .align(Alignment.Center)
+                .zoomable(zoomState)
+        )
     }
 }
 
@@ -261,6 +319,7 @@ fun EditButtons(
     uiState: DocumentUiState,
     onColorModeSelected: (ColorMode) -> Unit,
     onCropClick: () -> Unit,
+    onAdjustClick: () -> Unit,
     modifier: Modifier
 ) {
     Row(modifier = modifier.padding(8.dp)) {
@@ -271,6 +330,17 @@ fun EditButtons(
             )
         }
         Spacer(Modifier.width(8.dp))
+        // Adjustments re-render the page from its source photo, which only pages with a crop have.
+        if (uiState.currentPage?.canBeCropped == true && uiState.currentPage.colorMode != null) {
+            SecondaryActionButton(
+                icon = Icons.Default.Tune,
+                contentDescription = stringResource(R.string.adjust),
+                onClick = onAdjustClick,
+                // While the page re-renders its filter and adjustments are still the old ones.
+                enabled = !uiState.currentPage.isLoading,
+            )
+            Spacer(Modifier.width(8.dp))
+        }
         if (uiState.currentPage?.canBeCropped ?: false) {
             SecondaryActionButton(
                 icon = Icons.Default.Crop,
@@ -319,15 +389,21 @@ fun ColorModeButton(
 
 private val ColorMode.labelResource: Int
     get() = when (this) {
+        ORIGINAL -> R.string.color_mode_original
         COLOR -> R.string.color_mode_color
+        LIGHTEN -> R.string.color_mode_lighten
+        ENHANCE -> R.string.color_mode_enhance
+        NO_SHADOWS -> R.string.color_mode_no_shadows
         GRAYSCALE -> R.string.color_mode_grayscale
         BLACK_AND_WHITE -> R.string.color_mode_black_and_white
+        NEGATIVE -> R.string.color_mode_negative
     }
 
 @Composable
 private fun BottomBar(
     onExportClick: () -> Unit,
     onAddPageClick: () -> Unit,
+    enabled: Boolean = true,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -336,6 +412,7 @@ private fun BottomBar(
     ) {
         OutlinedButton(
             onClick = onAddPageClick,
+            enabled = enabled,
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color.Transparent,
                 contentColor = MaterialTheme.colorScheme.primary
@@ -353,6 +430,7 @@ private fun BottomBar(
             onClick = onExportClick,
             icon = Icons.Default.Done,
             text = stringResource(R.string.export),
+            enabled = enabled,
         )
     }
 }

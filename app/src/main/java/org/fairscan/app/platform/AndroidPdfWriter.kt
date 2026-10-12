@@ -64,11 +64,12 @@ class AndroidPdfWriter(val ocrService: OcrService, val assets: AssetManager) : P
             val ocrDocument = OcrDocument(document, assets)
             for ((index, page) in pages.withIndex()) {
                 val jpegOrPng = page.image.get()
-                val blackAndWhite = page.page.colorMode == ColorMode.BLACK_AND_WHITE
-                val image = if (blackAndWhite)
-                    createCcittG4Image(document, packBitonal(jpegOrPng))
-                else
-                    JPEGFactory.createFromByteArray(document, jpegOrPng.bytes)
+                val encoding = pdfImageEncoding(page.page.colorMode)
+                val blackAndWhite = encoding == PdfImageEncoding.CCITT_G4
+                val image = when (encoding) {
+                    PdfImageEncoding.CCITT_G4 -> createCcittG4Image(document, packBitonal(jpegOrPng))
+                    PdfImageEncoding.JPEG -> JPEGFactory.createFromByteArray(document, jpegOrPng.bytes)
+                }
 
                 // PDF has 72 points (units) per inch, 1 inch = 25.4 mm
                 val pointsPerMm = 72f / 25.4f
@@ -154,6 +155,12 @@ private fun halfSize(bitmap: Bitmap): Bitmap {
     bitmap.recycle()
     return scaled
 }
+
+internal enum class PdfImageEncoding { CCITT_G4, JPEG }
+
+// Only bitonal pages are embedded as 1-bit images. Every other filter is continuous tone.
+internal fun pdfImageEncoding(colorMode: ColorMode?): PdfImageEncoding =
+    if (colorMode?.isBitonal == true) PdfImageEncoding.CCITT_G4 else PdfImageEncoding.JPEG
 
 fun constrainToMaxFormat(widthMm: Double, heightMm: Double): Pair<Double, Double> {
     val maxDim = 297.0   // A4 height

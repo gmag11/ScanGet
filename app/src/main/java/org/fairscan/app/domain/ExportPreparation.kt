@@ -56,10 +56,11 @@ private fun EstimatedDimensions.applyRotation(rotation: Rotation): EstimatedDime
 
 suspend fun pagesToExport(
     imageRepository: ImageRepository,
-    exportQuality: ExportQuality
+    exportQuality: ExportQuality,
+    pageFilter: (List<ScanPage>) -> List<ScanPage> = { it },
 ): List<PageToExport<EncodedImage>> {
 
-    val pages = imageRepository.pages()
+    val pages = pageFilter(imageRepository.pages())
     return when (exportQuality) {
         ExportQuality.BALANCED -> pages.map {
             PageToExport(it) { image(it, imageRepository) }
@@ -93,9 +94,10 @@ suspend fun pagesToExport(
 
 suspend fun jpegsToExport(
     imageRepository: ImageRepository,
-    exportQuality: ExportQuality
+    exportQuality: ExportQuality,
+    pageFilter: (List<ScanPage>) -> List<ScanPage> = { it },
 ): List<PageToExport<Jpeg>> {
-    return pagesToExport(imageRepository, exportQuality).map {
+    return pagesToExport(imageRepository, exportQuality, pageFilter).map {
         PageToExport(
             it.page,
             {

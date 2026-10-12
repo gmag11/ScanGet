@@ -239,4 +239,8 @@
         <item quantity="one">%d page</item>
         <item quantity="other">%d pages</item>
     </plurals>
+    <string name="select_all">Select all</string>
+    <string name="pages_selected">%1$d selected</string>
+    <string name="export_active_page">Only the current page will be exported. Long-press a page to select several.</string>
+    <string name="share_separately">Share each page separately</string>
 </resources>

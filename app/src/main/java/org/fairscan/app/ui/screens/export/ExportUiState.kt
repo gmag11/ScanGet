@@ -28,11 +28,19 @@ data class ExportUiState(
     // and sharper as PDF.
     val blackAndWhiteAsJpeg: Boolean = false,
     val isSaving: Boolean = false,
+    val isSharingSeparately: Boolean = false,
     val result: ExportResult? = null,
     val savedBundle: SavedBundle? = null,
     val hasShared: Boolean = false,
     val error: ExportError? = null,
+    // Pages explicitly selected by the user; empty means "only the active page"
+    val selectedPageIds: Set<String> = emptySet(),
+    val activePageId: String? = null,
+    // 1-based numbers of the pages that will be exported, and size of the document
+    val exportedPageNumbers: List<Int> = emptyList(),
+    val totalPages: Int = 0,
 ) {
+    val isSelecting get() = selectedPageIds.isNotEmpty()
     val hasSavedOrShared get() = savedBundle != null || hasShared
 }
 

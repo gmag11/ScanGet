@@ -31,6 +31,7 @@ import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,8 +48,14 @@ import org.fairscan.app.data.FileManager
 import org.fairscan.app.data.ImageRepository
 import org.fairscan.app.domain.ExportQuality
 import org.fairscan.app.domain.PageViewKey
+import org.fairscan.app.domain.ScanPage
+import org.fairscan.app.domain.exportedPageNumbers
 import org.fairscan.app.domain.jpegsToExport
+import org.fairscan.app.domain.pagesForExport
+import org.fairscan.app.domain.pagesSuffix
 import org.fairscan.app.domain.pagesToExport
+import org.fairscan.app.domain.selectionAfterLongPress
+import org.fairscan.app.domain.selectionAfterTap
 import org.fairscan.app.ui.screens.settings.ExportFormat
 import org.fairscan.app.ui.screens.settings.ExportFormat.PDF
 import java.io.File
@@ -77,15 +84,16 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
     private suspend fun generatePdf(
         exportQuality: ExportQuality,
         disableOcr: Boolean,
+        pageFilter: (List<ScanPage>) -> List<ScanPage>,
         onPageCompleted: (Int) -> Unit,
     ): ExportResult.Pdf = withContext(Dispatchers.IO) {
-        val pageToExports = pagesToExport(imageRepository, exportQuality)
+        val pageToExports = pagesToExport(imageRepository, exportQuality, pageFilter)
         val pdf = fileManager.generatePdf(pageToExports, disableOcr, onPageCompleted)
         return@withContext ExportResult.Pdf(pdf.file, pdf.sizeInBytes, pdf.pageCount)
     }
 
     suspend fun generatePdfForExternalCall(): ExportResult.Pdf {
-        val pdf = generatePdf(ExportQuality.BALANCED, true) {}
+        val pdf = generatePdf(ExportQuality.BALANCED, true, { it }) {}
         val sourceFile = pdf.file
         val targetFile = File(sourceFile.parentFile, defaultFilename() + ".pdf")
         if (sourceFile.absolutePath == targetFile.absolutePath) return pdf
@@ -110,7 +118,62 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
     }
 
     private fun defaultFilename(): String {
-        return settingsRepository.defaultFilenameStyle.value.filename()
+        val state = _uiState.value
+        return settingsRepository.defaultFilenameStyle.value.filename() +
+            pagesSuffix(state.exportedPageNumbers, state.totalPages)
+    }
+
+    private var selectionJob: Job? = null
+
+    /** Sets the page exported when nothing is selected and refreshes the selection. */
+    fun setActivePage(pageId: String?) {
+        _uiState.update { it.copy(activePageId = pageId) }
+    }
+
+    fun onPageLongPress(pageId: String) {
+        if (_uiState.value.isSelecting) return
+        updateSelection { selectionAfterLongPress(it, pageId) }
+    }
+
+    fun onPageTap(pageId: String) {
+        if (!_uiState.value.isSelecting) {
+            // Outside selection mode, a tap chooses the page to export
+            if (_uiState.value.activePageId == pageId) return
+            _uiState.update { it.copy(activePageId = pageId) }
+            updateSelection { it }
+            return
+        }
+        updateSelection { selectionAfterTap(it, pageId) }
+    }
+
+    fun selectAll() {
+        viewModelScope.launch {
+            val ids = imageRepository.pages().map { it.id }.toSet()
+            updateSelection { ids }
+        }
+    }
+
+    private fun updateSelection(change: (Set<String>) -> Set<String>) {
+        _uiState.update { it.copy(selectedPageIds = change(it.selectedPageIds)) }
+        // The prepared result no longer matches: invalidate it and prepare again shortly
+        invalidateResult()
+        selectionJob?.cancel()
+        selectionJob = viewModelScope.launch {
+            delay(300)
+            prepare(keepSharedState = true)
+        }
+    }
+
+    private fun invalidateResult() {
+        preparationJob?.cancel()
+        lastPreparationKey = null
+        _uiState.update {
+            it.copy(result = null, savedBundle = null, hasShared = it.hasSavedOrShared)
+        }
+    }
+
+    private fun pageFilter(state: ExportUiState): (List<ScanPage>) -> List<ScanPage> = {
+        pagesForExport(it, state.selectedPageIds, state.activePageId)
     }
 
     private fun ensureValidFilename() {
@@ -125,7 +188,7 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
     }
 
     private suspend fun currentPageKeys(): ImmutableList<PageViewKey> =
-        imageRepository.pages().map { it.key() }.toImmutableList()
+        pageFilter(_uiState.value)(imageRepository.pages()).map { it.key() }.toImmutableList()
 
     fun cancelPreparationJob() {
         preparationJob?.let {
@@ -137,10 +200,25 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
         }
     }
 
-    fun prepareExportIfNeeded() {
-        ensureValidFilename()
+    fun prepareExportIfNeeded() = prepare(keepSharedState = false)
 
+    // keepSharedState: a new selection of the same document does not reset "already shared/saved"
+    private fun prepare(keepSharedState: Boolean) {
         viewModelScope.launch {
+            val allPages = imageRepository.pages()
+            // Forget selected pages that no longer exist
+            val existing = allPages.map { it.id }.toSet()
+            _uiState.update { state ->
+                val selected = state.selectedPageIds.intersect(existing)
+                state.copy(
+                    selectedPageIds = selected,
+                    exportedPageNumbers =
+                        exportedPageNumbers(allPages, selected, state.activePageId),
+                    totalPages = allPages.size,
+                )
+            }
+            ensureValidFilename()
+
             val exportQuality = settingsRepository.exportQuality.first()
             val exportFormat = settingsRepository.exportFormat.first()
             val ocrLanguageString = ocrService.languageString()
@@ -164,6 +242,12 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
                 _uiState.update {
                     ExportUiState(
                         filename = it.filename,
+                        hasShared = keepSharedState && it.hasShared,
+                        isUserDefinedFilename = it.isUserDefinedFilename,
+                        selectedPageIds = it.selectedPageIds,
+                        activePageId = it.activePageId,
+                        exportedPageNumbers = it.exportedPageNumbers,
+                        totalPages = it.totalPages,
                         format = exportFormat,
                         isGenerating = true,
                         progress = ExportProgress(0, pageCount),
@@ -180,9 +264,9 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
                 try {
                     val t1 = System.currentTimeMillis()
                     val result = if (exportFormat == ExportFormat.JPEG) {
-                        generateJpegs(exportQuality, onPageCompleted)
+                        generateJpegs(exportQuality, pageFilter(_uiState.value), onPageCompleted)
                     } else {
-                        generatePdf(exportQuality, false, onPageCompleted)
+                        generatePdf(exportQuality, false, pageFilter(_uiState.value), onPageCompleted)
                     }
                     _uiState.update { it.copy(result = result) }
                     val t2 = System.currentTimeMillis()
@@ -205,9 +289,10 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
 
     private suspend fun generateJpegs(
         exportQuality: ExportQuality,
+        pageFilter: (List<ScanPage>) -> List<ScanPage>,
         onPageCompleted: (Int) -> Unit,
     ): ExportResult.Jpeg = withContext(Dispatchers.IO) {
-        val jpegPages = jpegsToExport(imageRepository, exportQuality)
+        val jpegPages = jpegsToExport(imageRepository, exportQuality, pageFilter)
         val timestamp = System.currentTimeMillis()
         preparationDir.mkdirs()
         val files = jpegPages.mapIndexed { index, page ->
@@ -242,6 +327,8 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
                 renameFile(result.file, newFile)
                 ExportResult.Pdf(newFile, result.sizeInBytes, result.pageCount)
             }
+            // Separate files are named when generated and never go through renaming
+            is ExportResult.Pdfs -> result
             is ExportResult.Jpeg -> {
                 val base = filename.removeSuffix(".jpg")
                 val files = result.files
@@ -271,6 +358,60 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
             }
         }
     }
+
+    /** Shares each selected page in its own file, in the configured export format. */
+    fun onShareSeparatelyClicked() {
+        val state = _uiState.value
+        if (state.selectedPageIds.size < 2 || state.isSharingSeparately) return
+        _uiState.update { it.copy(isSharingSeparately = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val result = generateSeparateFiles(state)
+                _events.emit(ExportEvent.Share(result))
+                _uiState.update { it.copy(hasShared = true) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val message = "Failed to prepare separate share"
+                logger.e("FairScan", message, e)
+                _uiState.update { it.copy(error = ExportError.OnPrepareOrShare(message, e)) }
+            } finally {
+                _uiState.update { it.copy(isSharingSeparately = false) }
+            }
+        }
+    }
+
+    private suspend fun generateSeparateFiles(state: ExportUiState): ExportResult =
+        withContext(Dispatchers.IO) {
+            val exportQuality = settingsRepository.exportQuality.first()
+            val exportFormat = settingsRepository.exportFormat.first()
+            val allPages = imageRepository.pages()
+            val base = if (state.isUserDefinedFilename) {
+                state.filename.removeSuffix(".pdf").removeSuffix(".jpg")
+            } else {
+                settingsRepository.defaultFilenameStyle.value.filename()
+            }
+            preparationDir.mkdirs()
+            fun nameOf(page: ScanPage) =
+                "$base p${allPages.indexOfFirst { it.id == page.id } + 1}"
+            val files = if (exportFormat == ExportFormat.JPEG) {
+                jpegsToExport(imageRepository, exportQuality, pageFilter(state)).map {
+                    val file = File(preparationDir, nameOf(it.page) + ".jpg")
+                    file.writeBytes(it.image.get().bytes)
+                    file
+                }
+            } else {
+                pagesToExport(imageRepository, exportQuality, pageFilter(state)).map {
+                    val pdf = fileManager.generatePdf(listOf(it), false) {}
+                    val target = File(pdf.file.parentFile, nameOf(it.page) + ".pdf")
+                    renameFile(pdf.file, target)
+                    target
+                }
+            }
+            val size = files.sumOf { it.length() }
+            if (exportFormat == ExportFormat.JPEG) ExportResult.Jpeg(files, size)
+            else ExportResult.Pdfs(files, size)
+        }
 
     fun onSaveClicked() {
         viewModelScope.launch {
@@ -450,6 +591,15 @@ sealed class ExportResult {
         override val format: ExportFormat = PDF
     }
 
+    /** One single-page PDF per page. */
+    data class Pdfs(
+        override val files: List<File>,
+        override val sizeInBytes: Long,
+    ) : ExportResult() {
+        override val pageCount get() = files.size
+        override val format: ExportFormat = PDF
+    }
+
     data class Jpeg(
         val jpegFiles: List<File>,
         override val sizeInBytes: Long,
@@ -464,6 +614,7 @@ data class ExportActions(
     val prepareExportIfNeeded: () -> Unit,
     val setFilename: (String) -> Unit,
     val share: () -> Unit,
+    val shareSeparately: () -> Unit,
     val save: () -> Unit,
     val open: (SavedItem) -> Unit,
     val cancelPreparationJob: () -> Unit,

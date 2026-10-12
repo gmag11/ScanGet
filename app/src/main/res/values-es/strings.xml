@@ -118,4 +118,8 @@
         <item quantity="one">%d página</item>
         <item quantity="other">%d páginas</item>
     </plurals>
+    <string name="select_all">Seleccionar todo</string>
+    <string name="pages_selected">%1$d seleccionadas</string>
+    <string name="export_active_page">Solo se exportará la página actual. Mantén pulsada una página para seleccionar varias.</string>
+    <string name="share_separately">Compartir cada página por separado</string>
 </resources>

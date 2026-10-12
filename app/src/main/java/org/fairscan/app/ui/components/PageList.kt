@@ -35,11 +35,20 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -61,6 +70,17 @@ import sh.calvin.reorderable.rememberReorderableLazyListState
 
 const val PAGE_LIST_ELEMENT_SIZE_DP = THUMBNAIL_SIZE_DP
 
+/**
+ * Selection mode of the page list. A long press on a page (without moving it) calls [onLongPress].
+ * While [isSelecting], reordering is disabled and a click toggles the page through [onPageClick].
+ */
+data class PageListSelection(
+    val selectedIds: Set<String>,
+    val onLongPress: (String) -> Unit,
+) {
+    val isSelecting get() = selectedIds.isNotEmpty()
+}
+
 data class CommonPageListState(
     val document: DocumentUiModel,
     val onPageClick: (Int) -> Unit,
@@ -69,16 +89,21 @@ data class CommonPageListState(
     val showPageNumbers: Boolean,
     val currentPageIndex: Int? = null,
     val onLastItemPosition: ((Offset) -> Unit)? = null,
+    val selection: PageListSelection? = null,
 )
 
 @Composable
 fun CommonPageList(
     state: CommonPageListState,
     modifier: Modifier = Modifier,
+    forceHorizontal: Boolean = false,
 ) {
-    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val isLandscape = !forceHorizontal &&
+        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
+    var hasMoved by remember { mutableStateOf(false) }
     val reorderableLazyListState = rememberReorderableLazyListState(state.listState) { from, to ->
+        hasMoved = true
         val pageId = state.document.pages[from.index].key.pageId
         state.onPageReorder(pageId, to.index)
     }
@@ -87,8 +112,16 @@ fun CommonPageList(
             ReorderableItem(reorderableLazyListState, key = item.pageId) { isDragging ->
                 val borderColor =
                     if (isDragging) MaterialTheme.colorScheme.primary else Color.Transparent
+                val selection = state.selection
                 val modifier = Modifier
-                    .longPressDraggableHandle()
+                    .longPressDraggableHandle(
+                        enabled = selection?.isSelecting != true,
+                        onDragStarted = { hasMoved = false },
+                        onDragStopped = {
+                            // A long press that did not move the page starts the selection
+                            if (selection != null && !hasMoved) selection.onLongPress(item.pageId)
+                        },
+                    )
                     .border(
                         width = 2.dp,
                         color = borderColor,
@@ -136,7 +169,11 @@ private fun PageThumbnail(
     modifier: Modifier,
 ) {
     val bitmap = image.asImageBitmap()
-    val isSelected = index == state.currentPageIndex
+    val pageId = state.document.pages[index].key.pageId
+    val selection = state.selection
+    val isChecked = selection?.selectedIds?.contains(pageId) == true
+    val isSelected =
+        if (selection?.isSelecting == true) isChecked else index == state.currentPageIndex
     val borderColor =
         if (isSelected) MaterialTheme.colorScheme.primary else Color.LightGray
     val maxImageSize = PAGE_LIST_ELEMENT_SIZE_DP.dp
@@ -155,7 +192,7 @@ private fun PageThumbnail(
         Card(
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
             shape = RoundedCornerShape(6.dp),
-            border = BorderStroke(1.dp, borderColor),
+            border = BorderStroke(if (isSelected) 3.dp else 1.dp, borderColor),
             modifier = Modifier.padding(4.dp).align(Alignment.Center)
         ) {
             Image(
@@ -166,6 +203,18 @@ private fun PageThumbnail(
         }
         if (state.showPageNumbers) {
             PageNumberBadge(index)
+        }
+        if (isChecked) {
+            Icon(
+                Icons.Default.CheckCircle,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(20.dp)
+                    .background(Color.White, CircleShape)
+            )
         }
     }
 }

@@ -62,7 +62,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -92,6 +94,9 @@ import org.fairscan.app.THUMBNAIL_SIZE_DP
 import org.fairscan.app.ui.Navigation
 import org.fairscan.app.ui.components.AppOverflowMenu
 import org.fairscan.app.ui.components.BackButton
+import org.fairscan.app.ui.components.CommonPageList
+import org.fairscan.app.ui.components.CommonPageListState
+import org.fairscan.app.ui.components.PageListSelection
 import org.fairscan.app.ui.components.MainActionButton
 import org.fairscan.app.ui.components.NewDocumentDialog
 import org.fairscan.app.ui.components.isLandscape
@@ -110,13 +115,16 @@ fun ExportScreenWrapper(
     uiState: ExportUiState,
     currentDocument: DocumentUiModel,
     exportActions: ExportActions,
+    pageActions: ExportPageActions,
     onCloseScan: () -> Unit,
 ) {
     BackHandler { navigation.back() }
 
     val showConfirmationDialog = rememberSaveable { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
+    // Also runs again when pages are reordered, edited or deleted
+    val pageKeys = currentDocument.pages.map { it.key }
+    LaunchedEffect(pageKeys) {
         exportActions.prepareExportIfNeeded()
     }
     DisposableEffect(Unit) {
@@ -134,6 +142,7 @@ fun ExportScreenWrapper(
         uiState = uiState,
         currentDocument = currentDocument,
         navigation = navigation,
+        pageActions = pageActions,
         onShare = {
             if (!uiState.isSaving) {
                 exportActions.share()
@@ -144,6 +153,7 @@ fun ExportScreenWrapper(
                 exportActions.save()
             }
         },
+        onShareSeparately = exportActions.shareSeparately,
         onOpen = exportActions.open,
         onCloseScan = {
             if (!uiState.isSaving) {
@@ -171,6 +181,8 @@ fun ExportScreen(
     onSave: () -> Unit,
     onOpen: (SavedItem) -> Unit,
     onCloseScan: () -> Unit,
+    pageActions: ExportPageActions = ExportPageActions(),
+    onShareSeparately: () -> Unit = {},
 ) {
     Scaffold(
         topBar = {
@@ -193,8 +205,9 @@ fun ExportScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 PdfInfosAndResultBar(uiState, currentDocument, onOpen, onThumbnailClick)
+                PageSelectionStrip(uiState, currentDocument, pageActions)
                 Spacer(Modifier.weight(1f)) // push buttons down
-                MainActions(onFilenameChange, uiState, onShare, onSave, onCloseScan)
+                MainActions(onFilenameChange, uiState, onShare, onSave, onShareSeparately, onCloseScan)
             }
         } else {
             Row(
@@ -207,13 +220,64 @@ fun ExportScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     PdfInfosAndResultBar(uiState, currentDocument, onOpen, onThumbnailClick)
+                    PageSelectionStrip(uiState, currentDocument, pageActions)
                 }
                 Column(modifier = Modifier.weight(1f)) {
-                    MainActions(onFilenameChange, uiState, onShare, onSave, onCloseScan)
+                    MainActions(onFilenameChange, uiState, onShare, onSave, onShareSeparately, onCloseScan)
                 }
             }
 
         }
+    }
+}
+
+data class ExportPageActions(
+    val onPageTap: (String) -> Unit = {},
+    val onPageLongPress: (String) -> Unit = {},
+    val onPageReorder: (String, Int) -> Unit = { _, _ -> },
+    val onSelectAll: () -> Unit = {},
+)
+
+@Composable
+private fun PageSelectionStrip(
+    uiState: ExportUiState,
+    document: DocumentUiModel,
+    actions: ExportPageActions,
+) {
+    if (document.isEmpty()) return
+    val activeIndex = document.pages.indexOfFirst { it.key.pageId == uiState.activePageId }
+    val listState = rememberLazyListState()
+    val allSelected = uiState.selectedPageIds.size >= document.pageCount()
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = if (uiState.isSelecting)
+                    stringResource(R.string.pages_selected, uiState.selectedPageIds.size)
+                else
+                    stringResource(R.string.export_active_page),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = actions.onSelectAll, enabled = !allSelected) {
+                Text(stringResource(R.string.select_all))
+            }
+        }
+        CommonPageList(
+            CommonPageListState(
+                document = document,
+                onPageClick = { index -> actions.onPageTap(document.pages[index].key.pageId) },
+                onPageReorder = actions.onPageReorder,
+                listState = listState,
+                showPageNumbers = true,
+                currentPageIndex = activeIndex.takeIf { it >= 0 },
+                selection = PageListSelection(uiState.selectedPageIds, actions.onPageLongPress),
+            ),
+            forceHorizontal = true,
+        )
     }
 }
 
@@ -266,7 +330,8 @@ private fun PdfInfos(
     val result = uiState.result
 
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        val thumbnail = currentDocument.thumbnail(0)
+        val thumbnail =
+            currentDocument.thumbnail((uiState.exportedPageNumbers.firstOrNull() ?: 1) - 1)
         thumbnail?.let {
             Card(
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
@@ -387,6 +452,7 @@ private fun MainActions(
     uiState: ExportUiState,
     onShare: () -> Unit,
     onSave: () -> Unit,
+    onShareSeparately: () -> Unit,
     onCloseScan: () -> Unit,
 ) {
     Column(
@@ -415,6 +481,17 @@ private fun MainActions(
                     text = stringResource(R.string.save),
                     modifier = Modifier.weight(1f)
                         .alpha(if (uiState.isSaving) 0.6f else 1f)
+                )
+            }
+            if (uiState.selectedPageIds.size >= 2) {
+                ExportButton(
+                    onClick = onShareSeparately,
+                    enabled = !uiState.isSharingSeparately,
+                    isPrimary = !uiState.hasSavedOrShared,
+                    icon = Icons.Default.Share,
+                    text = stringResource(R.string.share_separately),
+                    modifier = Modifier.fillMaxWidth()
+                        .alpha(if (uiState.isSharingSeparately) 0.6f else 1f)
                 )
             }
         }

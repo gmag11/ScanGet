@@ -69,6 +69,7 @@ import org.fairscan.app.ui.screens.document.DocumentScreen
 import org.fairscan.app.ui.screens.export.ExportActions
 import org.fairscan.app.ui.screens.export.ExportEvent
 import org.fairscan.app.ui.screens.export.ExportResult
+import org.fairscan.app.ui.screens.export.ExportPageActions
 import org.fairscan.app.ui.screens.export.ExportScreenWrapper
 import org.fairscan.app.ui.screens.export.ExportViewModel
 import org.fairscan.app.ui.screens.settings.OcrLanguagesScreen
@@ -228,14 +229,24 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     is Screen.Main.Export -> {
+                        LaunchedEffect(Unit) {
+                            exportViewModel.setActivePage(documentUiState.currentPage?.key?.pageId)
+                        }
                         ExportScreenWrapper(
                             navigation = navigation,
                             uiState = exportUiState,
                             currentDocument = document,
+                            pageActions = ExportPageActions(
+                                onPageTap = exportViewModel::onPageTap,
+                                onPageLongPress = exportViewModel::onPageLongPress,
+                                onPageReorder = { id, newIndex -> viewModel.movePage(id, newIndex) },
+                                onSelectAll = exportViewModel::selectAll,
+                            ),
                             exportActions = ExportActions(
                                 prepareExportIfNeeded = exportViewModel::prepareExportIfNeeded,
                                 setFilename = exportViewModel::setFilename,
                                 share = { exportViewModel.onShareClicked() },
+                                shareSeparately = { exportViewModel.onShareSeparatelyClicked() },
                                 save = { exportViewModel.onSaveClicked() },
                                 open = { item -> openUri(item.uri, item.format.mimeType, logger) },
                                 cancelPreparationJob = exportViewModel::cancelPreparationJob,

@@ -324,8 +324,14 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
         val result = _uiState.value.result
             ?: throw IllegalStateException("Export result missing")
         ensureValidFilename()
-        val filename = _uiState.value.filename
-        val updated = when (result) {
+        val updated = renamedResult(result, _uiState.value.filename)
+        _uiState.update { it.copy(result = updated) }
+        return updated
+    }
+
+    /** The files of [result] named after [filename]. */
+    private fun renamedResult(result: ExportResult, filename: String): ExportResult =
+        when (result) {
             is ExportResult.Pdf -> {
                 val fileName = FileManager.addPdfExtensionIfMissing(filename)
                 val newFile = File(result.file.parentFile, fileName)
@@ -346,8 +352,43 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
                 result.copy(jpegFiles = renamedFiles)
             }
         }
-        _uiState.update { it.copy(result = updated) }
-        return updated
+
+    private val _isQuickSharing = MutableStateFlow(false)
+
+    /** A share started from the library (see [shareWholeDocument]) is being prepared. */
+    val isQuickSharing: StateFlow<Boolean> = _isQuickSharing.asStateFlow()
+
+    /**
+     * Shares the whole current document without going through the export screen, in the format and
+     * quality of the settings, named after the document.
+     */
+    fun shareWholeDocument() {
+        if (_isQuickSharing.value) return
+        _isQuickSharing.value = true
+        viewModelScope.launch {
+            try {
+                val quality = settingsRepository.exportQuality.first()
+                val format = settingsRepository.exportFormat.first()
+                val name = defaultExportBaseName(
+                    imageRepository.documentInfo(), settingsRepository.defaultFilenameStyle.value)
+                val result = withContext(Dispatchers.IO) {
+                    val all: (List<ScanPage>) -> List<ScanPage> = { it }
+                    if (format == ExportFormat.JPEG) {
+                        renamedResult(generateJpegs(quality, all) {}, name)
+                    } else {
+                        renamedResult(generatePdf(quality, false, all) {}, name)
+                    }
+                }
+                _events.emit(ExportEvent.Share(result))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val message = "Failed to prepare share"
+                logger.e("FairScan", message, e)
+            } finally {
+                _isQuickSharing.value = false
+            }
+        }
     }
 
     fun onShareClicked() {

@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import org.fairscan.app.R
+import org.fairscan.app.data.library.LastOpenedDocument
 import org.fairscan.app.data.library.LibraryLocationSettings
 import org.fairscan.app.data.library.StoredLibraryLocation
 import org.fairscan.app.domain.ExportQuality
@@ -42,7 +43,7 @@ class SettingsRepository(
     private val context: Context,
     private val dataStore: DataStore<Preferences>,
     private val scope: CoroutineScope,
-) : LibraryLocationSettings {
+) : LibraryLocationSettings, LastOpenedDocument {
 
     private val DEFAULT_COLOR_MODE = stringPreferencesKey("default_color_mode")
     private val DEFAULT_FILENAME_STYLE = stringPreferencesKey("default_filename_style")
@@ -53,6 +54,7 @@ class SettingsRepository(
     private val LIBRARY_LOCATION_KIND = stringPreferencesKey("library_location_kind")
     private val LIBRARY_LOCATION = stringPreferencesKey("library_location")
     private val LIBRARY_LOCATION_NAME = stringPreferencesKey("library_location_name")
+    private val LAST_OPENED_DOCUMENT = stringPreferencesKey("last_opened_document_id")
 
     val defaultColorMode: Flow<DefaultColorMode> =
         dataStore.data.map { prefs -> parseDefaultColorMode(prefs[DEFAULT_COLOR_MODE]) }
@@ -148,6 +150,14 @@ class SettingsRepository(
                 if (location.name != null) prefs[LIBRARY_LOCATION_NAME] = location.name
                 else prefs.remove(LIBRARY_LOCATION_NAME)
             }
+        }
+    }
+
+    override suspend fun lastOpenedId(): String? = dataStore.data.first()[LAST_OPENED_DOCUMENT]
+
+    override suspend fun setLastOpenedId(id: String?) {
+        dataStore.edit { prefs ->
+            if (id == null) prefs.remove(LAST_OPENED_DOCUMENT) else prefs[LAST_OPENED_DOCUMENT] = id
         }
     }
 

@@ -289,4 +289,21 @@
     <!-- Settings -->
     <string name="settings_section_library">Library</string>
     <string name="library_directory">Library folder</string>
+    <!-- Library screen (home) -->
+    <string name="library_recent">Recent</string>
+    <string name="library_all_documents">All documents</string>
+    <string name="library_add_pages">Add pages</string>
+    <string name="library_scan">Scan</string>
+    <string name="library_empty_title">Your scans will appear here</string>
+    <string name="library_empty_subtitle">Every document is saved automatically</string>
+    <string name="library_document_actions">Document actions</string>
+    <string name="library_rename">Rename</string>
+    <string name="library_rename_title">Rename document</string>
+    <string name="library_rename_label">Name</string>
+    <string name="library_delete_title">Delete document?</string>
+    <string name="library_delete_message">The original captures will be deleted. Exported files are kept.</string>
+    <string name="library_opening">Opening…</string>
+    <string name="library_sharing">Preparing…</string>
+    <!-- %1$s: date and time, %2$s: number of pages -->
+    <string name="library_document_info" translatable="false">%1$s · %2$s</string>
 </resources>

@@ -22,6 +22,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.fairscan.app.data.ImageRepository
 import org.fairscan.app.data.Logger
+import org.fairscan.app.data.library.LastOpenedDocument
 import org.fairscan.app.data.library.LibraryIndex
 import org.fairscan.app.data.library.LibraryLocations
 import org.fairscan.app.data.library.LibraryRepository
@@ -58,6 +59,7 @@ class SessionViewModel(
         // A scan requested by another app is temporary: it is not kept in the library
         libraryLocations = if (launchMode == LaunchMode.NORMAL) appContainer.libraryLocations else null,
         libraryIndex = appContainer.libraryIndex,
+        lastOpened = appContainer.settingsRepository,
     )
 
     val imageRepository: ImageRepository = sessionContainer.imageRepository
@@ -106,6 +108,7 @@ class ScanSessionContainer(
     documentNamer: (Long) -> String,
     libraryLocations: LibraryLocations?,
     libraryIndex: LibraryIndex,
+    lastOpened: LastOpenedDocument,
 ) {
     private val density = context.resources.displayMetrics.density
     private val thumbnailSizePx = (THUMBNAIL_SIZE_DP * density).toInt()
@@ -126,6 +129,7 @@ class ScanSessionContainer(
             logger = logger,
             index = libraryIndex,
             locationKey = locations::currentKey,
+            lastOpened = lastOpened,
         )
     }
 }

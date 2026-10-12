@@ -61,6 +61,8 @@ class LibraryRepository(
     private val index: LibraryIndex? = null,
     // Identifies the current location, to keep the cached list of documents apart per location
     private val locationKey: () -> String? = { "library" },
+    // The document opened or created last, which the library shows first
+    private val lastOpened: LastOpenedDocument? = null,
 ) {
     private val mutex = Mutex()
 
@@ -121,6 +123,9 @@ class LibraryRepository(
             .sortedByDescending { it.info.updatedAt }
     }
 
+    /** The id of the document opened or created last, if it is still wanted. */
+    suspend fun lastOpenedId(): String? = withContext(ioDispatcher) { lastOpened?.lastOpenedId() }
+
     suspend fun cover(id: String): ByteArray? = withContext(ioDispatcher) { storeProvider()?.readCover(id) }
 
     /**
@@ -141,6 +146,7 @@ class LibraryRepository(
         withContext(ioDispatcher) {
             val store = store() ?: return@withContext false
             val metadata = store.readMetadata(id) ?: return@withContext false
+            lastOpened?.setLastOpenedId(id)
             if (imageRepository.documentInfo().id == id) return@withContext true
             closeWorkingDocument(store)
             imageRepository.load(LoadedDocument(metadata.toInfo(), metadata.pages)) { pageId ->
@@ -200,6 +206,7 @@ class LibraryRepository(
                 lastCover = null
             }
             store.delete(id)
+            if (lastOpened?.lastOpenedId() == id) lastOpened.setLastOpenedId(null)
         }
     }
 
@@ -230,6 +237,8 @@ class LibraryRepository(
                 store.writeMetadata(snapshot)
                 lastWritten = snapshot
             }
+            // A document that is new in the library is the one the user is working on
+            if (!known) lastOpened?.setLastOpenedId(id)
             writeCover(store, snapshot)
             return
         }

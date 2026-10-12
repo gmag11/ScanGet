@@ -89,14 +89,14 @@ class MainViewModel(
 
             // Wait until the library location is known
             val status = libraryStatus?.filterNotNull()?.first()
-            _navigationState.value = initialNavigationState(pages.isNotEmpty(), status)
+            _navigationState.value = initialNavigationState(status)
         }
         // Once the library folder is chosen, the setup screen gives way to the usual first screen
         libraryStatus?.let { statuses ->
             viewModelScope.launch {
                 statuses.collect { status ->
                     if (status is LibraryStatus.Ready && _navigationState.value?.current == Screen.Main.LibrarySetup) {
-                        _navigationState.value = initialNavigationState(_pages.value.isNotEmpty(), status)
+                        _navigationState.value = initialNavigationState(status)
                     }
                 }
             }
@@ -169,7 +169,12 @@ class MainViewModel(
 
     fun navigateBack() {
         cancelAdjusting()
-        _navigationState.update { stack -> stack?.navigateBack() }
+        _navigationState.update { stack -> stack?.navigateBack(hasPages = _pages.value.isNotEmpty()) }
+        // Back to the editor from elsewhere shows a page that exists
+        val pageCount = _pages.value.size
+        if (_navigationState.value?.current is Screen.Main.Document && pageCount > 0) {
+            _currentPageIndex.value = min(pageCount - 1, _currentPageIndex.value)
+        }
     }
 
     fun rotateCurrentPage(clockwise: Boolean) {
@@ -403,18 +408,54 @@ class MainViewModel(
         }
     }
 
+    private val _isOpeningDocument = MutableStateFlow(false)
+
+    /** A document is being opened (copied from the library to be edited), which can take a moment. */
+    val isOpeningDocument: StateFlow<Boolean> = _isOpeningDocument
+
     /** Makes the saved document [id] the current one; [onOpened] is called once it is. */
     fun openDocument(id: String, onOpened: () -> Unit = {}) {
         cancelAdjusting()
+        _isOpeningDocument.value = true
         viewModelScope.launch {
-            val opened = withContext(Dispatchers.IO) { library?.open(id) ?: false }
-            if (opened) {
-                _pages.value = imageRepository.pages()
-                _currentPageIndex.value = 0
-                onOpened()
+            try {
+                val opened = withContext(Dispatchers.IO) { library?.open(id) ?: false }
+                if (opened) {
+                    _pages.value = imageRepository.pages()
+                    _currentPageIndex.value = 0
+                    onOpened()
+                }
+            } finally {
+                _isOpeningDocument.value = false
             }
         }
     }
+
+    /**
+     * Removes a document from the library. If it is the one being edited, the app forgets its pages
+     * too, so that the next scan starts with an empty document.
+     */
+    suspend fun deleteDocument(id: String) {
+        val library = library ?: return
+        val wasCurrent = imageRepository.documentInfo().id == id
+        library.delete(id)
+        if (wasCurrent) _pages.value = persistentListOf()
+    }
+
+    // Set by the library for the screen it opens next, which uses it once
+
+    private var importOnCameraOpen = false
+    private var exportAllPages = false
+
+    /** The camera, when opened next, starts by asking which photos to import. */
+    fun requestImportOnCameraOpen() { importOnCameraOpen = true }
+
+    fun consumeImportOnCameraOpen(): Boolean = importOnCameraOpen.also { importOnCameraOpen = false }
+
+    /** The export screen, when opened next, exports every page and not only the current one. */
+    fun requestExportAllPages() { exportAllPages = true }
+
+    fun consumeExportAllPages(): Boolean = exportAllPages.also { exportAllPages = false }
 
     fun handleImageCaptured(capturedPage: CapturedPage) {
         viewModelScope.launch {

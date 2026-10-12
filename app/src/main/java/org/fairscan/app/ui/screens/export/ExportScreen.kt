@@ -98,7 +98,6 @@ import org.fairscan.app.ui.components.CommonPageList
 import org.fairscan.app.ui.components.CommonPageListState
 import org.fairscan.app.ui.components.PageListSelection
 import org.fairscan.app.ui.components.MainActionButton
-import org.fairscan.app.ui.components.NewDocumentDialog
 import org.fairscan.app.ui.components.isLandscape
 import org.fairscan.app.ui.components.pageCountText
 import org.fairscan.app.ui.dummyNavigation
@@ -119,8 +118,6 @@ fun ExportScreenWrapper(
     onCloseScan: () -> Unit,
 ) {
     BackHandler { navigation.back() }
-
-    val showConfirmationDialog = rememberSaveable { mutableStateOf(false) }
 
     // Also runs again when pages are reordered, edited or deleted
     val pageKeys = currentDocument.pages.map { it.key }
@@ -155,19 +152,11 @@ fun ExportScreenWrapper(
         },
         onShareSeparately = exportActions.shareSeparately,
         onOpen = exportActions.open,
+        // The document stays in the library: starting a new one loses nothing
         onCloseScan = {
-            if (!uiState.isSaving) {
-                if (uiState.hasSavedOrShared)
-                    onCloseScan()
-                else
-                    showConfirmationDialog.value = true
-            }
+            if (!uiState.isSaving) onCloseScan()
         },
     )
-
-    if (showConfirmationDialog.value) {
-        NewDocumentDialog(onCloseScan, showConfirmationDialog, stringResource(R.string.scan_new))
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

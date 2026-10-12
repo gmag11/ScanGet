@@ -59,6 +59,8 @@ class MainViewModelLibraryTest {
     private val libraryDir by lazy { folder.newFolder("library") }
     private val store by lazy { FileLibraryStore(libraryDir) }
     private lateinit var viewModel: MainViewModel
+    private var libraryRepository: LibraryRepository? = null
+    private fun library() = libraryRepository!!
     private lateinit var scope: CoroutineScope
 
     @Before
@@ -84,6 +86,7 @@ class MainViewModelLibraryTest {
         val logger = Logger { _, _, _ -> }
         val repository = ImageRepository(folder.newFolder(), transformations, scope, logger)
         val library = if (withLibrary) LibraryRepository({ store }, repository, scope, logger) else null
+        libraryRepository = library
         viewModel = MainViewModel(repository, logger, library)
         return viewModel
     }
@@ -167,5 +170,58 @@ class MainViewModelLibraryTest {
 
         assertThat(viewModel.imageRepository.pages()).isEmpty()
         assertThat(libraryDir.list()!!).isEmpty()
+    }
+
+    @Test
+    fun `deleting the open document empties the editor and deleting another leaves it`() = runTest {
+        createViewModel()
+        addPages(2)
+        val openId = viewModel.imageRepository.documentInfo().id
+        viewModel.startNewDocument()
+        awaitUntil { viewModel.imageRepository.documentInfo().id != openId }
+        addPages(1)
+        val current = viewModel.imageRepository.documentInfo().id
+        viewModel.imageRepository.pages() // the working document, not yet in the library
+        library().flush()
+
+        viewModel.deleteDocument(openId) // another document
+        assertThat(store.readMetadata(openId)).isNull()
+        assertThat(viewModel.imageRepository.pages()).hasSize(1)
+
+        viewModel.deleteDocument(current) // the one being edited
+        awaitUntil { viewModel.documentUiModel.value.pageCount() == 0 }
+        assertThat(store.readMetadata(current)).isNull()
+        assertThat(viewModel.imageRepository.pages()).isEmpty()
+    }
+
+    @Test
+    fun `what the library asks of the next screen is used once`() = runTest {
+        createViewModel()
+
+        assertThat(viewModel.consumeImportOnCameraOpen()).isFalse()
+        assertThat(viewModel.consumeExportAllPages()).isFalse()
+
+        viewModel.requestImportOnCameraOpen()
+        viewModel.requestExportAllPages()
+        assertThat(viewModel.consumeImportOnCameraOpen()).isTrue()
+        assertThat(viewModel.consumeImportOnCameraOpen()).isFalse()
+        assertThat(viewModel.consumeExportAllPages()).isTrue()
+        assertThat(viewModel.consumeExportAllPages()).isFalse()
+    }
+
+    @Test
+    fun `opening shows that a document is being opened until it is`() = runTest {
+        createViewModel()
+        addPages(2)
+        val id = viewModel.imageRepository.documentInfo().id
+        viewModel.startNewDocument()
+        awaitUntil { viewModel.imageRepository.documentInfo().id != id }
+        var opened = false
+
+        viewModel.openDocument(id) { opened = true }
+        awaitUntil { opened && !viewModel.isOpeningDocument.value }
+
+        assertThat(viewModel.isOpeningDocument.value).isFalse()
+        assertThat(viewModel.documentUiState.value.currentPageIndex).isEqualTo(0)
     }
 }

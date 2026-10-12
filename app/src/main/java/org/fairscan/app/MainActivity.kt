@@ -33,6 +33,7 @@ import android.util.Log
 import android.view.KeyEvent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -43,6 +44,9 @@ import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.toClipEntry
@@ -62,7 +66,6 @@ import org.fairscan.app.ui.Navigation
 import org.fairscan.app.ui.Screen
 import org.fairscan.app.ui.components.rememberCameraPermissionState
 import org.fairscan.app.ui.screens.LibrariesScreen
-import org.fairscan.app.ui.screens.ResumeScanScreen
 import org.fairscan.app.ui.screens.about.AboutEvent
 import org.fairscan.app.ui.screens.about.AboutScreen
 import org.fairscan.app.ui.screens.about.AboutViewModel
@@ -84,6 +87,9 @@ import org.fairscan.app.ui.screens.setup.LibrarySetupScreen
 import org.fairscan.app.ui.screens.setup.LibraryFolderViewModel
 import org.fairscan.app.ui.screens.setup.LibraryFolderUiState
 import org.fairscan.app.ui.screens.setup.LibraryFolderEvent
+import org.fairscan.app.ui.screens.library.LibraryActions
+import org.fairscan.app.ui.screens.library.LibraryScreen
+import org.fairscan.app.ui.screens.library.LibraryViewModel
 import org.fairscan.app.ui.screens.setup.LibraryFolderDialogs
 import org.fairscan.app.ui.screens.settings.LibraryFolderSetting
 import org.fairscan.app.ui.screens.settings.SettingsScreen
@@ -125,6 +131,13 @@ class MainActivity : ComponentActivity() {
                     lifecycleScope.launch(Dispatchers.IO) { appContainer.libraryLocations.refresh() }
                 }
             })
+        }
+        val libraryViewModel: LibraryViewModel? = sessionViewModel.libraryRepository?.let { library ->
+            viewModels<LibraryViewModel> {
+                appContainer.viewModelFactory {
+                    LibraryViewModel(library, it.logger, deleteDocument = { id -> viewModel.deleteDocument(id) })
+                }
+            }.value
         }
         val libraryFolderViewModel: LibraryFolderViewModel by viewModels {
             appContainer.viewModelFactory {
@@ -207,14 +220,45 @@ class MainActivity : ComponentActivity() {
                     null -> {
                         // waiting to load pages to get an initial screen
                     }
-                    is Screen.Main.ResumeScan -> {
-                        ResumeScanScreen(
-                            currentDocument = documentUiState,
-                            onResumeScan = navigation.toCameraScreen,
-                            onStartNewScan = {
-                                viewModel.startNewDocument()
-                                navigation.toCameraScreen()
-                            }
+                    is Screen.Main.Library -> {
+                        val library = checkNotNull(libraryViewModel) { "No library to show" }
+                        val libraryState by library.uiState.collectAsStateWithLifecycle()
+                        val isOpening by viewModel.isOpeningDocument.collectAsStateWithLifecycle()
+                        val isQuickSharing by exportViewModel.isQuickSharing.collectAsStateWithLifecycle()
+                        var sharingId by remember { mutableStateOf<String?>(null) }
+                        LaunchedEffect(isQuickSharing) { if (!isQuickSharing) sharingId = null }
+                        LaunchedEffect(Unit) { library.refresh() }
+                        LibraryScreen(
+                            uiState = libraryState,
+                            navigation = navigation,
+                            actions = LibraryActions(
+                                onOpen = { id -> viewModel.openDocument(id) { navigation.toDocumentScreen() } },
+                                onScan = {
+                                    viewModel.startNewDocument()
+                                    navigation.toCameraScreen()
+                                },
+                                onImport = {
+                                    viewModel.requestImportOnCameraOpen()
+                                    viewModel.startNewDocument()
+                                    navigation.toCameraScreen()
+                                },
+                                onAddPages = { id -> viewModel.openDocument(id) { navigation.toCameraScreen() } },
+                                onShare = { id ->
+                                    sharingId = id
+                                    viewModel.openDocument(id) { exportViewModel.shareWholeDocument() }
+                                },
+                                onExport = { id ->
+                                    viewModel.openDocument(id) {
+                                        viewModel.requestExportAllPages()
+                                        navigation.toExportScreen()
+                                    }
+                                },
+                                onRename = library::rename,
+                                onDelete = library::delete,
+                            ),
+                            loadCover = library::loadCover,
+                            busy = isOpening,
+                            sharingId = sharingId,
                         )
                     }
                     is Screen.Main.LibrarySetup -> {
@@ -226,10 +270,18 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     is Screen.Main.Camera -> {
+                        BackHandler { navigation.back() }
                         val pickMultiple = rememberLauncherForActivityResult(
                             ActivityResultContracts.GetMultipleContents()) {
                                 uris -> cameraViewModel.importPhotos(uris)
                             }
+                        // "Import" in the library opens the camera screen already asking for the photos
+                        LaunchedEffect(Unit) {
+                            if (viewModel.consumeImportOnCameraOpen()) {
+                                cameraViewModel.onImportClicked()
+                                pickMultiple.launch("image/*")
+                            }
+                        }
                         CameraScreen(
                             viewModel,
                             cameraViewModel,
@@ -278,6 +330,8 @@ class MainActivity : ComponentActivity() {
                     is Screen.Main.Export -> {
                         LaunchedEffect(Unit) {
                             exportViewModel.setActivePage(documentUiState.currentPage?.key?.pageId)
+                            // Exporting a document from the library exports all of it
+                            if (viewModel.consumeExportAllPages()) exportViewModel.selectAll()
                         }
                         ExportScreenWrapper(
                             navigation = navigation,
@@ -678,8 +732,9 @@ class MainActivity : ComponentActivity() {
             }
         },
         shouldDisplayBackButton = {
-            viewModel.currentScreen.value !is Screen.Main.Camera
-                    || launchMode == LaunchMode.EXTERNAL_SCAN_TO_PDF
+            // The library is where the app is left from; everything else goes back somewhere
+            val screen = viewModel.currentScreen.value
+            screen !is Screen.Main.Library && screen !is Screen.Main.LibrarySetup
         }
     )
 

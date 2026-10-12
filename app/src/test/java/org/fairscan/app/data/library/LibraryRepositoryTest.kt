@@ -78,6 +78,12 @@ class LibraryRepositoryTest {
     // What the library uses as its store; null while the library is not available
     private var currentStore: LibraryStore? = null
 
+    private class FakeLastOpened(var id: String? = null) : LastOpenedDocument {
+        override suspend fun lastOpenedId() = id
+        override suspend fun setLastOpenedId(id: String?) { this.id = id }
+    }
+    private val lastOpened = FakeLastOpened()
+
     private fun TestScope.session(name: String, debounce: Long = 500): Session {
         currentStore = store
         val dir = folder.newFolder(name)
@@ -85,7 +91,7 @@ class LibraryRepositoryTest {
             documentNamer = { "Scan $it" }, clock = { clockValue })
         val library = LibraryRepository({ currentStore }, images, backgroundScope, Logger { _, _, _ -> },
             debounceMillis = debounce, clock = { clockValue },
-            ioDispatcher = StandardTestDispatcher(testScheduler))
+            ioDispatcher = StandardTestDispatcher(testScheduler), lastOpened = lastOpened)
         runCurrent() // lets the autosave subscribe
         return Session(images, library, dir)
     }
@@ -521,5 +527,87 @@ class LibraryRepositoryTest {
         key = "folder-b"
 
         assertThat(library.cachedDocuments()).isEmpty()
+    }
+
+    // --- The document opened or created last ---
+
+    @Test
+    fun `a document that is new in the library is the one opened last`() = runTest {
+        val s = session("work")
+        assertThat(s.library.lastOpenedId()).isNull()
+
+        s.addPage()
+        s.library.flush()
+        val firstId = s.images.documentInfo().id
+        assertThat(s.library.lastOpenedId()).isEqualTo(firstId)
+
+        s.library.startNewDocument()
+        s.addPage()
+        s.library.flush()
+
+        assertThat(s.library.lastOpenedId()).isEqualTo(s.images.documentInfo().id)
+        assertThat(s.library.lastOpenedId()).isNotEqualTo(firstId)
+    }
+
+    @Test
+    fun `editing a document does not change which one was opened last`() = runTest {
+        val s = session("work")
+        s.addPage()
+        val firstId = s.images.documentInfo().id
+        s.library.startNewDocument()
+        s.addPage()
+        s.library.flush()
+        s.library.open(firstId)
+        s.library.startNewDocument() // an empty document is not saved: nothing is created
+        s.library.flush()
+
+        assertThat(s.library.lastOpenedId()).isEqualTo(firstId)
+    }
+
+    @Test
+    fun `opening a document makes it the one opened last, also when it is already open`() = runTest {
+        val s = session("work")
+        s.addPage()
+        val firstId = s.images.documentInfo().id
+        s.library.startNewDocument()
+        s.addPage()
+        val secondId = s.images.documentInfo().id
+        s.library.flush()
+        assertThat(s.library.lastOpenedId()).isEqualTo(secondId)
+
+        s.library.open(firstId)
+        assertThat(s.library.lastOpenedId()).isEqualTo(firstId)
+
+        s.library.open(firstId) // already the working document
+        assertThat(s.library.lastOpenedId()).isEqualTo(firstId)
+    }
+
+    @Test
+    fun `a document that does not exist is not recorded as opened`() = runTest {
+        val s = session("work")
+        s.addPage()
+        s.library.flush()
+        val id = s.images.documentInfo().id
+
+        assertThat(s.library.open("unknown")).isFalse()
+
+        assertThat(s.library.lastOpenedId()).isEqualTo(id)
+    }
+
+    @Test
+    fun `deleting the document opened last forgets it and deleting another keeps it`() = runTest {
+        val s = session("work")
+        s.addPage()
+        val firstId = s.images.documentInfo().id
+        s.library.startNewDocument()
+        s.addPage()
+        val secondId = s.images.documentInfo().id
+        s.library.flush()
+
+        s.library.delete(firstId)
+        assertThat(s.library.lastOpenedId()).isEqualTo(secondId)
+
+        s.library.delete(secondId)
+        assertThat(s.library.lastOpenedId()).isNull()
     }
 }

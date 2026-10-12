@@ -161,4 +161,18 @@
     <string name="library_moving_not_moved">Algunos documentos no se han podido mover y siguen en la carpeta anterior.</string>
     <string name="settings_section_library">Biblioteca</string>
     <string name="library_directory">Carpeta de la biblioteca</string>
+    <string name="library_recent">Reciente</string>
+    <string name="library_all_documents">Todos los documentos</string>
+    <string name="library_add_pages">Añadir páginas</string>
+    <string name="library_scan">Escanear</string>
+    <string name="library_empty_title">Tus escaneos aparecerán aquí</string>
+    <string name="library_empty_subtitle">Cada documento se guarda automáticamente</string>
+    <string name="library_document_actions">Acciones del documento</string>
+    <string name="library_rename">Renombrar</string>
+    <string name="library_rename_title">Renombrar documento</string>
+    <string name="library_rename_label">Nombre</string>
+    <string name="library_delete_title">¿Eliminar documento?</string>
+    <string name="library_delete_message">Se eliminarán las capturas originales. Los archivos exportados se conservan.</string>
+    <string name="library_opening">Abriendo…</string>
+    <string name="library_sharing">Preparando…</string>
 </resources>

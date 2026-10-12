@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.unit.IntSize
 import org.fairscan.imageprocessing.Point
 import org.fairscan.imageprocessing.Quad
@@ -47,6 +48,10 @@ fun QuadOverlay(
         .systemGestureExclusion { cornerExclusionRect(quad.topRight, containerSize, displaySize) }
         .systemGestureExclusion { cornerExclusionRect(quad.bottomRight, containerSize, displaySize) }
         .systemGestureExclusion { cornerExclusionRect(quad.bottomLeft, containerSize, displaySize) }
+        .systemGestureExclusion { sideExclusionRect(quad.topLeft, quad.topRight, containerSize, displaySize) }
+        .systemGestureExclusion { sideExclusionRect(quad.topRight, quad.bottomRight, containerSize, displaySize) }
+        .systemGestureExclusion { sideExclusionRect(quad.bottomRight, quad.bottomLeft, containerSize, displaySize) }
+        .systemGestureExclusion { sideExclusionRect(quad.bottomLeft, quad.topLeft, containerSize, displaySize) }
     ) {
         val scaledQuad = quad.scaledTo(
             fromWidth = 1,
@@ -82,6 +87,22 @@ fun QuadOverlay(
             )
         }
 
+        // Draw side handles: a short bar along each side, at its midpoint
+        for (i in 0 until 4) {
+            val start = corners[i]
+            val end = corners[(i + 1) % 4]
+            val mid = (start + end) / 2f
+            val direction = (end - start).let { it / it.getDistance().coerceAtLeast(1f) }
+            val half = direction * QuadEditingHandler.SIDE_HANDLE_HALF_LENGTH
+            drawLine(
+                color = handleColor,
+                start = mid - half,
+                end = mid + half,
+                strokeWidth = QuadEditingHandler.CORNER_RADIUS,
+                cap = StrokeCap.Round
+            )
+        }
+
     }
 }
 
@@ -98,5 +119,21 @@ private fun cornerExclusionRect(
                 max(.0f, pos.y - r),
                 min(containerSize.width.toFloat(), pos.x + r),
                 min(containerSize.height.toFloat(), pos.y + r)
+    )
+}
+
+private fun sideExclusionRect(
+    a: Point,
+    b: Point,
+    containerSize: IntSize,
+    displaySize: IntSize
+): Rect {
+    val mid = (QuadCoordinateUtils.normalizedToScreen(a, containerSize, displaySize) +
+            QuadCoordinateUtils.normalizedToScreen(b, containerSize, displaySize)) / 2f
+    val r = QuadEditingHandler.CORNER_TOUCH_RADIUS
+    return Rect(max(.0f, mid.x - r),
+                max(.0f, mid.y - r),
+                min(containerSize.width.toFloat(), mid.x + r),
+                min(containerSize.height.toFloat(), mid.y + r)
     )
 }

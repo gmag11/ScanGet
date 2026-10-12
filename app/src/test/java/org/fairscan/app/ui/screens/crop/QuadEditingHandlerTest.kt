@@ -227,4 +227,70 @@ class QuadEditingHandlerTest {
         val result = handler.updateQuadCorner(narrowQuad, 3, Offset(0.0f, -0.2f))
         assertThat(result).isEqualTo(narrowQuad)
     }
+
+    @Test
+    fun findTouchedHandle_selectsSideAtMidpointAndPrefersCorners() {
+        val quad = centeredQuad
+        val topMid = QuadCoordinateUtils.normalizedToScreen(Point(0.5, 0.2), containerSize, displaySize)
+        val topLeft = QuadCoordinateUtils.normalizedToScreen(quad.topLeft, containerSize, displaySize)
+        val leftMid = QuadCoordinateUtils.normalizedToScreen(Point(0.2, 0.5), containerSize, displaySize)
+        val center = QuadCoordinateUtils.normalizedToScreen(Point(0.5, 0.5), containerSize, displaySize)
+
+        assertThat(handler.findTouchedHandle(topMid, quad, containerSize, displaySize)).isEqualTo(4)
+        assertThat(handler.findTouchedHandle(leftMid, quad, containerSize, displaySize)).isEqualTo(7)
+        assertThat(handler.findTouchedHandle(topLeft, quad, containerSize, displaySize)).isEqualTo(0)
+        assertThat(handler.findTouchedHandle(center, quad, containerSize, displaySize)).isEqualTo(-1)
+    }
+
+    @Test
+    fun updateQuadSide_movesAcrossOnlyAndIgnoresAlongComponent() {
+        // Top side is horizontal: only the vertical part of the drag counts.
+        val moved = handler.updateQuadSide(centeredQuad, 0, Offset(0.1f, 0.1f), displaySize)
+        assertThat(moved.topLeft.x).isCloseTo(0.2, AssertJOffset.offset(1e-9))
+        assertThat(moved.topRight.x).isCloseTo(0.8, AssertJOffset.offset(1e-9))
+        assertThat(moved.topLeft.y).isCloseTo(0.3, AssertJOffset.offset(1e-6))
+        assertThat(moved.topRight.y).isCloseTo(0.3, AssertJOffset.offset(1e-6))
+        assertThat(moved.bottomLeft).isEqualTo(centeredQuad.bottomLeft)
+        assertThat(moved.bottomRight).isEqualTo(centeredQuad.bottomRight)
+
+        val alongOnly = handler.updateQuadSide(centeredQuad, 0, Offset(0.1f, 0f), displaySize)
+        assertThat(alongOnly).isEqualTo(centeredQuad)
+    }
+
+    @Test
+    fun updateQuadSide_keepsSideDirection() {
+        val tilted = Quad(Point(0.2, 0.2), Point(0.8, 0.3), Point(0.8, 0.8), Point(0.2, 0.8))
+        val moved = handler.updateQuadSide(tilted, 0, Offset(0.02f, 0.05f), displaySize)
+        fun dir(q: Quad) = Pair((q.topRight.x - q.topLeft.x) * displaySize.width,
+                                (q.topRight.y - q.topLeft.y) * displaySize.height)
+        val (ox, oy) = dir(tilted)
+        val (nx, ny) = dir(moved)
+        assertThat(moved).isNotEqualTo(tilted)
+        assertThat(nx).isCloseTo(ox, AssertJOffset.offset(1e-6))
+        assertThat(ny).isCloseTo(oy, AssertJOffset.offset(1e-6))
+    }
+
+    @Test
+    fun updateQuadSide_rejectsStepsLeavingTheImage() {
+        val moved = handler.updateQuadSide(centeredQuad, 3, Offset(-0.5f, 0f), displaySize)
+        assertThat(moved).isEqualTo(centeredQuad)
+    }
+
+    @Test
+    fun updateQuadSide_rejectsConcaveResult() {
+        // Dragging the top side down past the bottom side would flip the quad.
+        val moved = handler.updateQuadSide(centeredQuad, 0, Offset(0f, 0.7f), displaySize)
+        assertThat(moved).isEqualTo(centeredQuad)
+    }
+
+    @Test
+    fun updateQuad_routesCornersAndSides() {
+        val corner = handler.updateQuad(centeredQuad, 0, Offset(0.05f, 0.05f), displaySize)
+        assertThat(corner.topLeft.x).isCloseTo(0.25, AssertJOffset.offset(1e-6))
+        for (side in 4..7) {
+            val moved = handler.updateQuad(centeredQuad, side, Offset(0.02f, 0.02f), displaySize)
+            assertThat(moved).isNotEqualTo(centeredQuad)
+        }
+        assertThat(handler.updateQuad(centeredQuad, -1, Offset(0.1f, 0.1f), displaySize)).isEqualTo(centeredQuad)
+    }
 }

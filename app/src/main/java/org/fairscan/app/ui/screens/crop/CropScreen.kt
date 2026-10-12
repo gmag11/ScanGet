@@ -190,7 +190,7 @@ private fun DragQuadOverlay(
                         val cornerIndex = if (state.touchDownCornerIndex >= 0) {
                             state.touchDownCornerIndex
                         } else {
-                            quadHandler.findTouchedCorner(startPos, quad, containerSize, displaySize)
+                            quadHandler.findTouchedHandle(startPos, quad, containerSize, displaySize)
                         }
 
                         if (cornerIndex >= 0) {
@@ -220,8 +220,8 @@ private fun DragQuadOverlay(
                         when {
                             state.draggedCornerIndex >= 0 -> {
                                 state.updateQuad(
-                                    quadHandler.updateQuadCorner(
-                                        quad, state.draggedCornerIndex, normalizedDelta
+                                    quadHandler.updateQuad(
+                                        quad, state.draggedCornerIndex, normalizedDelta, displaySize
                                     )
                                 )
                             }
@@ -236,7 +236,7 @@ private fun DragQuadOverlay(
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val quad = state.editableQuad
                     if (quad != null) {
-                        val cIdx = quadHandler.findTouchedCorner(down.position, quad, containerSize, displaySize)
+                        val cIdx = quadHandler.findTouchedHandle(down.position, quad, containerSize, displaySize)
                         if (cIdx >= 0) {
                             state.onTouchDown(down.position, cIdx)
                         }
@@ -289,15 +289,22 @@ private fun DragMagnifyingGlass(state: CropScreenState, bitmap: Bitmap?) {
     val focusPosition = if (quad != null) {
         when {
             activeCornerIndex != null -> {
-                val corner = when (activeCornerIndex) {
-                    0 -> quad.topLeft
-                    1 -> quad.topRight
-                    2 -> quad.bottomRight
-                    3 -> quad.bottomLeft
-                    else -> null
-                }
-                corner?.let {
-                    QuadCoordinateUtils.normalizedToScreen(it, containerSize, displaySize)
+                if (QuadEditingHandler.isSide(activeCornerIndex)) {
+                    QuadEditingHandler().sideMidpointOnScreen(
+                        quad, activeCornerIndex - QuadEditingHandler.FIRST_SIDE_INDEX,
+                        containerSize, displaySize
+                    )
+                } else {
+                    val corner = when (activeCornerIndex) {
+                        0 -> quad.topLeft
+                        1 -> quad.topRight
+                        2 -> quad.bottomRight
+                        3 -> quad.bottomLeft
+                        else -> null
+                    }
+                    corner?.let {
+                        QuadCoordinateUtils.normalizedToScreen(it, containerSize, displaySize)
+                    }
                 }
             }
             else -> null

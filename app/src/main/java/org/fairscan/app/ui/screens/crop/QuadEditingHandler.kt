@@ -18,12 +18,20 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntSize
 import org.fairscan.imageprocessing.Point
 import org.fairscan.imageprocessing.Quad
+import kotlin.math.hypot
 
 class QuadEditingHandler {
 
     companion object {
         const val CORNER_RADIUS = 40f
         const val CORNER_TOUCH_RADIUS = 90f
+        const val SIDE_HANDLE_HALF_LENGTH = 50f
+
+        /** Handle indices 0..3 are the corners (TL, TR, BR, BL); 4..7 are the sides top, right, bottom, left. */
+        const val FIRST_SIDE_INDEX = 4
+        const val HANDLE_COUNT = 8
+
+        fun isSide(handleIndex: Int) = handleIndex in FIRST_SIDE_INDEX until HANDLE_COUNT
     }
 
     fun findTouchedCorner(
@@ -49,6 +57,78 @@ class QuadEditingHandler {
             .sortedBy { (_, distance) -> distance }
             .map { (index, _) -> index }
     }
+
+    /** Corner under the touch if any, otherwise the side whose midpoint is under the touch, otherwise -1. */
+    fun findTouchedHandle(
+        touchPos: Offset,
+        quad: Quad,
+        containerSize: IntSize,
+        displaySize: IntSize
+    ): Int {
+        val corner = findTouchedCorner(touchPos, quad, containerSize, displaySize)
+        if (corner >= 0) return corner
+        return (0 until 4)
+            .map { side -> side to (touchPos - sideMidpointOnScreen(quad, side, containerSize, displaySize)).getDistance() }
+            .filter { (_, distance) -> distance < CORNER_TOUCH_RADIUS }
+            .minByOrNull { (_, distance) -> distance }
+            ?.let { (side, _) -> FIRST_SIDE_INDEX + side }
+            ?: -1
+    }
+
+    /** Midpoint of the side (0 = top, 1 = right, 2 = bottom, 3 = left) in container coordinates. */
+    fun sideMidpointOnScreen(quad: Quad, side: Int, containerSize: IntSize, displaySize: IntSize): Offset {
+        val (a, b) = sideEnds(quad, side)
+        return (QuadCoordinateUtils.normalizedToScreen(a, containerSize, displaySize) +
+                QuadCoordinateUtils.normalizedToScreen(b, containerSize, displaySize)) / 2f
+    }
+
+    /** Moves a corner (index 0..3) or a side (index 4..7) by a normalized [delta]. */
+    fun updateQuad(quad: Quad, handleIndex: Int, delta: Offset, displaySize: IntSize): Quad =
+        if (isSide(handleIndex)) {
+            updateQuadSide(quad, handleIndex - FIRST_SIDE_INDEX, delta, displaySize)
+        } else {
+            updateQuadCorner(quad, handleIndex, delta)
+        }
+
+    /**
+     * Translates a side perpendicular to its own direction: only the component of [delta]
+     * (normalized coordinates) across the side is kept, so the side stays parallel to itself.
+     * The step is ignored if it would leave the image or make the quad non-convex.
+     */
+    fun updateQuadSide(quad: Quad, side: Int, delta: Offset, displaySize: IntSize): Quad {
+        if (side !in 0..3) return quad
+        val (a, b) = sideEnds(quad, side)
+        // Work in pixels: the image aspect ratio distorts normalized coordinates.
+        val w = displaySize.width.toDouble()
+        val h = displaySize.height.toDouble()
+        val dx = (b.x - a.x) * w
+        val dy = (b.y - a.y) * h
+        val length = hypot(dx, dy)
+        if (length == 0.0) return quad
+        val nx = -dy / length
+        val ny = dx / length
+        val across = delta.x * w * nx + delta.y * h * ny
+        val move = Point(across * nx / w, across * ny / h)
+        val newA = a + move
+        val newB = b + move
+        if (!isInsideImage(newA) || !isInsideImage(newB)) return quad
+        val candidate = when (side) {
+            0 -> quad.copy(topLeft = newA, topRight = newB)
+            1 -> quad.copy(topRight = newA, bottomRight = newB)
+            2 -> quad.copy(bottomRight = newA, bottomLeft = newB)
+            else -> quad.copy(bottomLeft = newA, topLeft = newB)
+        }
+        return if (candidate.isConvex()) candidate else quad
+    }
+
+    private fun sideEnds(quad: Quad, side: Int): Pair<Point, Point> = when (side) {
+        0 -> quad.topLeft to quad.topRight
+        1 -> quad.topRight to quad.bottomRight
+        2 -> quad.bottomRight to quad.bottomLeft
+        else -> quad.bottomLeft to quad.topLeft
+    }
+
+    private fun isInsideImage(p: Point) = p.x in 0.0..1.0 && p.y in 0.0..1.0
 
     fun updateQuadCorner(quad: Quad, cornerIndex: Int, delta: Offset): Quad {
         val normalizedDelta = Point(delta.x.toDouble(), delta.y.toDouble())

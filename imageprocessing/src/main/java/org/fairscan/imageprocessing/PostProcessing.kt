@@ -28,21 +28,87 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-enum class ColorMode {
-    COLOR,
-    GRAYSCALE,
-    BLACK_AND_WHITE,
+enum class ColorMode(val controls: Set<AdjustmentControl>) {
+    ORIGINAL(TONE_AND_DETAIL),
+    COLOR(TONE_AND_DETAIL + AdjustmentControl.SHADOW_REMOVAL),
+    LIGHTEN(TONE_AND_DETAIL),
+    ENHANCE(TONE_AND_DETAIL),
+    NO_SHADOWS(TONE_AND_DETAIL + AdjustmentControl.SHADOW_REMOVAL),
+    GRAYSCALE(GRAY_TONE_AND_DETAIL),
+    BLACK_AND_WHITE(setOf(AdjustmentControl.THRESHOLD)),
+    NEGATIVE(GRAY_TONE_AND_DETAIL);
+
+    /** Whether pages in this mode only contain pure black and pure white pixels. */
+    val isBitonal: Boolean get() = this == BLACK_AND_WHITE
 }
 
-fun enhanceCapturedImage(img: Mat, colorMode: ColorMode, maxPixels: Long = 0L): Mat {
-    return when (colorMode) {
-        ColorMode.COLOR -> multiScaleRetinexOnL(img)
+private val TONE_AND_DETAIL = setOf(
+    AdjustmentControl.BRIGHTNESS,
+    AdjustmentControl.CONTRAST,
+    AdjustmentControl.SATURATION,
+    AdjustmentControl.DETAIL,
+)
+
+private val GRAY_TONE_AND_DETAIL = setOf(
+    AdjustmentControl.BRIGHTNESS,
+    AdjustmentControl.CONTRAST,
+    AdjustmentControl.DETAIL,
+)
+
+// Retinex blend used by the Color filter when shadowRemoval is neutral.
+private const val COLOR_RETINEX_ALPHA = 0.6
+
+// Sauvola k when threshold is neutral, and how far the threshold control moves it. A lower k
+// puts the local threshold closer to the local mean, so more of the page turns black.
+private const val SAUVOLA_K = 0.25
+private const val SAUVOLA_K_SPAN = 0.15
+
+/**
+ * Maps a -100..100 strength adjustment to a 0..1 value around [base]: 0 gives [base], 100 gives 1
+ * and -100 gives 0, linearly on each side.
+ */
+internal fun strengthAround(base: Double, adjustment: Int): Double =
+    if (adjustment >= 0) base + (1.0 - base) * adjustment / 100.0
+    else base + base * adjustment / 100.0
+
+/** Sauvola k for the threshold control: raising the threshold lowers k. */
+internal fun sauvolaK(threshold: Int): Double = SAUVOLA_K - SAUVOLA_K_SPAN * threshold / 100.0
+
+fun enhanceCapturedImage(
+    img: Mat,
+    colorMode: ColorMode,
+    maxPixels: Long = 0L,
+    adjustments: Adjustments = Adjustments.NEUTRAL,
+): Mat {
+    // Controls the filter does not expose have no effect.
+    val adj = adjustments.forMode(colorMode)
+    val filtered = when (colorMode) {
+        ColorMode.ORIGINAL -> img.clone()
+        ColorMode.COLOR -> multiScaleRetinexOnL(img, strengthAround(COLOR_RETINEX_ALPHA, adj.shadowRemoval))
         ColorMode.GRAYSCALE -> enhanceGrayscaleImage(img)
-        ColorMode.BLACK_AND_WHITE -> binarizeDocument(img, maxPixels)
+        ColorMode.BLACK_AND_WHITE -> binarizeDocument(img, maxPixels, sauvolaK(adj.threshold))
+        ColorMode.LIGHTEN -> lightenImage(img)
+        ColorMode.ENHANCE -> enhanceColorImage(img)
+        ColorMode.NO_SHADOWS -> removeShadows(img, strengthAround(NO_SHADOWS_STRENGTH, adj.shadowRemoval))
+        ColorMode.NEGATIVE -> negativeImage(img)
     }
+    // Tone and detail have no effect on a bitonal image, which is why such a filter exposes none.
+    if (colorMode.isBitonal) return filtered
+    var current = filtered
+    if (adj.hasTone) {
+        val toned = applyTone(current, adj)
+        current.release()
+        current = toned
+    }
+    if (adj.detail != 0) {
+        val sharpened = applyDetail(current, adj.detail)
+        current.release()
+        current = sharpened
+    }
+    return current
 }
 
-fun multiScaleRetinexOnL(bgr: Mat): Mat {
+fun multiScaleRetinexOnL(bgr: Mat, alpha: Double = COLOR_RETINEX_ALPHA): Mat {
 
     // --- 1. BGR -> Lab ---
     val lab = Mat()
@@ -131,7 +197,6 @@ fun multiScaleRetinexOnL(bgr: Mat): Mat {
     Core.add(correctedL, Scalar(meanL - amplitude / 2.0), correctedL)
 
     // --- 6. Blend with original L ---
-    val alpha = 0.6
     Core.addWeighted(
         lOriginalFloat, 1.0 - alpha,
         correctedL, alpha,
@@ -345,13 +410,12 @@ private fun flattenedGrayscale(img: Mat): Mat {
     return denoised
 }
 
-private const val SAUVOLA_K = 0.25
 private const val SAUVOLA_R = 128.0
 
 // Returns a single channel containing only 0 and 255. Black and white pages are stored as
 // PNG, where two more copies of that channel would only take space. The export path packs
 // it into one bit per pixel.
-fun binarizeDocument(img: Mat, upscaleTo: Long = 0L): Mat {
+fun binarizeDocument(img: Mat, upscaleTo: Long = 0L, sauvolaK: Double = SAUVOLA_K): Mat {
     // Flatten the illumination at the captured resolution. Interpolated pixels carry no extra
     // information for that step, only for where the threshold puts an edge.
     val flattened = flattenedGrayscale(img)
@@ -363,7 +427,7 @@ fun binarizeDocument(img: Mat, upscaleTo: Long = 0L): Mat {
     gray.convertTo(src, CvType.CV_32F)
     gray.release()
 
-    val binary = sauvolaThreshold(src, window)
+    val binary = sauvolaThreshold(src, window, sauvolaK)
     val fill = flatFill(src, window)
     src.release()
 
@@ -386,7 +450,7 @@ private fun upscaleToPixels(img: Mat, targetPixels: Long): Mat {
 }
 
 // Sauvola local thresholding: t = mean * (1 + k * (stdDev / r - 1))
-private fun sauvolaThreshold(src: Mat, window: Int): Mat {
+private fun sauvolaThreshold(src: Mat, window: Int, k: Double): Mat {
     val windowSize = Size(window.toDouble(), window.toDouble())
 
     val mean = Mat()
@@ -405,8 +469,8 @@ private fun sauvolaThreshold(src: Mat, window: Int): Mat {
     Core.max(deviation, Scalar(0.0), deviation)
     Core.sqrt(deviation, deviation)
 
-    Core.multiply(deviation, Scalar(SAUVOLA_K / SAUVOLA_R), deviation)
-    Core.add(deviation, Scalar(1.0 - SAUVOLA_K), deviation)
+    Core.multiply(deviation, Scalar(k / SAUVOLA_R), deviation)
+    Core.add(deviation, Scalar(1.0 - k), deviation)
     val threshold = Mat()
     Core.multiply(mean, deviation, threshold)
     mean.release(); deviation.release()

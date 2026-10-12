@@ -1,3 +1,7 @@
+## Purpose
+
+Home screen of the app: lists the saved documents with the one opened last on top as a card with quick actions, lets the user open, rename, export, share and delete them, and start a new scan or import.
+
 ## ADDED Requirements
 
 ### Requirement: Library as the home screen

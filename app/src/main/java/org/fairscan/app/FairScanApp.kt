@@ -53,6 +53,9 @@ class FairScanApp : Application() {
 
 const val THUMBNAIL_SIZE_DP = 120
 
+// Pages in the grid of the document overview (cells of 150 to 180dp)
+const val GRID_THUMBNAIL_SIZE_DP = 240
+
 private val Context.dataStore by preferencesDataStore(name = "fairscan_settings")
 
 class AppContainer(context: Context) {

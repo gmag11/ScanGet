@@ -24,6 +24,8 @@ sealed class Screen {
         object Export : Main()
         /** The saved documents: the home screen, except for a scan requested by another app. */
         object Library : Main()
+        /** The pages of the open document as a grid, from where a page is picked to be edited. */
+        object Overview : Main()
         /** Asks where the library is kept, until there is a folder to keep it in. */
         object LibrarySetup : Main()
     }
@@ -39,6 +41,7 @@ data class Navigation(
     val toCameraScreen: () -> Unit,
     val toEditImageScreen: () -> Unit,
     val toDocumentScreen: () -> Unit,
+    val toOverviewScreen: () -> Unit,
     val toExportScreen: () -> Unit,
     val toAboutScreen: () -> Unit,
     val toLibrariesScreen: () -> Unit,
@@ -68,10 +71,10 @@ data class NavigationState private constructor(val stack: List<Screen>, val root
     }
 
     /**
-     * With the library (its screen is the root) back goes from the editor and from the export to
-     * the library, and from the camera to the editor if the document has pages, else to the library.
-     * Without it (a scan requested by another app, root is the camera) everything goes back to the
-     * camera.
+     * With the library (its screen is the root) back goes from the overview to the library, from the
+     * page editor and the export to the overview, and from the camera to the overview if the
+     * document has pages, else to the library. Without it (a scan requested by another app, root is
+     * the camera) everything goes back to the camera.
      */
     fun navigateBack(hasPages: Boolean = false): NavigationState {
         val withLibrary = root == Screen.Main.Library
@@ -79,13 +82,14 @@ data class NavigationState private constructor(val stack: List<Screen>, val root
             root -> this // Back handled by system
             is Screen.Main.Library -> this // Back handled by system
             is Screen.Main.LibrarySetup -> this // Back handled by system
+            is Screen.Main.Overview -> copy(stack = listOf(Screen.Main.Library))
             is Screen.Main.Camera ->
-                copy(stack = listOf(if (hasPages) Screen.Main.Document() else Screen.Main.Library))
+                copy(stack = listOf(if (hasPages) Screen.Main.Overview else Screen.Main.Library))
             is Screen.Main.Document ->
-                copy(stack = listOf(if (withLibrary) Screen.Main.Library else Screen.Main.Camera))
+                copy(stack = listOf(if (withLibrary) Screen.Main.Overview else Screen.Main.Camera))
             is Screen.Main.EditImage -> copy(stack = listOf(Screen.Main.Document()))
             is Screen.Main.Export ->
-                copy(stack = listOf(if (withLibrary) Screen.Main.Document() else Screen.Main.Camera))
+                copy(stack = listOf(if (withLibrary) Screen.Main.Overview else Screen.Main.Camera))
             is Screen.Overlay -> copy(stack = stack.dropLast(1))
         }
     }

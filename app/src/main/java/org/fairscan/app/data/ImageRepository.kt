@@ -84,6 +84,8 @@ class ImageRepository(
     private val processingJobs = synchronizedMap(mutableMapOf<PageViewKey, Deferred<Unit>>())
     private val imageCache = createLruCache<PageViewKey, Deferred<EncodedImage?>>(maxEntries = 50)
     private val thumbnailCache = createLruCache<PageViewKey, Deferred<EncodedImage?>>(maxEntries = 1000)
+    // Bigger thumbnails, for the grid of the document overview: fewer of them are shown at once
+    private val gridThumbnailCache = createLruCache<PageViewKey, Deferred<EncodedImage?>>(maxEntries = 200)
 
     private fun <K, V> createLruCache(maxEntries: Int): MutableMap<K, V> =
         synchronizedMap(object : LinkedHashMap<K, V>(16, 0.75f, true) {
@@ -361,6 +363,10 @@ class ImageRepository(
     suspend fun getThumbnail(key: PageViewKey): EncodedImage? =
         getOrCompute(thumbnailCache, key, ::computeThumbnail)
 
+    /** The page as a thumbnail big enough for the grid of the document overview. */
+    suspend fun getGridThumbnail(key: PageViewKey): EncodedImage? =
+        getOrCompute(gridThumbnailCache, key, ::computeGridThumbnail)
+
     // --- Cache compute functions ---
 
     private suspend fun getOrCompute(
@@ -395,11 +401,20 @@ class ImageRepository(
         }
 
     private suspend fun computeThumbnail(key: PageViewKey): EncodedImage? =
+        computeResized(key) { transformations.resizeToThumbnail(it) }
+
+    private suspend fun computeGridThumbnail(key: PageViewKey): EncodedImage? =
+        computeResized(key) { transformations.resizeToGridThumbnail(it) }
+
+    private suspend fun computeResized(
+        key: PageViewKey,
+        resize: (EncodedImage) -> EncodedImage,
+    ): EncodedImage? =
         withContext(Dispatchers.IO) {
             val processed = getOrCompute(imageCache, key, ::computeProcessedImage)
                 ?: return@withContext null
             try {
-                transformations.resizeToThumbnail(processed)
+                resize(processed)
             } catch (e: Exception) {
                 val message = "Failed to compute thumbnail for ${key.pageId}"
                 logger.e("ImageRepository", message, e)
@@ -473,6 +488,7 @@ class ImageRepository(
         processedDir.listFiles()?.forEach { it.delete() }
         synchronized(imageCache) { imageCache.clear() }
         synchronized(thumbnailCache) { thumbnailCache.clear() }
+        synchronized(gridThumbnailCache) { gridThumbnailCache.clear() }
     }
 
     // --- Legacy migration ---

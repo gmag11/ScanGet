@@ -157,10 +157,15 @@ fun isLandscape(configuration: Configuration): Boolean {
     return configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 }
 
+/**
+ * The menu of the app (settings, about). [extraItems] adds entries of the screen above them; each
+ * is given the function that closes the menu.
+ */
 @Composable
 fun AppOverflowMenu(
     navigation: Navigation,
     modifier: Modifier = Modifier,
+    extraItems: @Composable (dismiss: () -> Unit) -> Unit = {},
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box(
@@ -180,6 +185,7 @@ fun AppOverflowMenu(
             modifier = Modifier
                 .background(MaterialTheme.colorScheme.surface)
         ) {
+            extraItems { expanded = false }
 
             navigation.toSettingsScreen?.let { toSettings ->
                 DropdownMenuItem(

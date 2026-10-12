@@ -23,6 +23,7 @@ import org.fairscan.app.ui.Screen.Main.Export
 import org.fairscan.app.ui.Screen.Main.EditImage
 import org.fairscan.app.ui.Screen.Main.Library
 import org.fairscan.app.ui.Screen.Main.LibrarySetup
+import org.fairscan.app.ui.Screen.Main.Overview
 import org.fairscan.app.ui.Screen.Overlay.Settings
 import org.fairscan.app.ui.Screen.Overlay.About
 import org.fairscan.app.ui.Screen.Overlay.Libraries
@@ -122,34 +123,43 @@ class NavigationTest {
     }
 
     @Test
-    fun back_from_the_editor_goes_to_the_library() {
-        val atEditor = atLibrary.navigateTo(Document(2))
+    fun back_from_the_overview_goes_to_the_library() {
+        val atOverview = atLibrary.navigateTo(Overview)
 
-        assertThat(atEditor.navigateBack().current).isEqualTo(Library)
-        assertThat(atEditor.navigateBack(hasPages = true).current).isEqualTo(Library)
+        assertThat(atOverview.navigateBack().current).isEqualTo(Library)
+        assertThat(atOverview.navigateBack(hasPages = true).current).isEqualTo(Library)
     }
 
     @Test
-    fun back_from_the_camera_goes_to_the_editor_if_the_document_has_pages_else_to_the_library() {
+    fun back_from_the_editor_goes_to_the_overview() {
+        val atEditor = atLibrary.navigateTo(Document(2))
+
+        assertThat(atEditor.navigateBack().current).isEqualTo(Overview)
+        assertThat(atEditor.navigateBack(hasPages = true).current).isEqualTo(Overview)
+    }
+
+    @Test
+    fun back_from_the_camera_goes_to_the_overview_if_the_document_has_pages_else_to_the_library() {
         val atCamera = atLibrary.navigateTo(Camera)
 
-        assertThat(atCamera.navigateBack(hasPages = true).current).isEqualTo(Document())
+        assertThat(atCamera.navigateBack(hasPages = true).current).isEqualTo(Overview)
         assertThat(atCamera.navigateBack(hasPages = false).current).isEqualTo(Library)
     }
 
     @Test
-    fun back_from_the_export_goes_to_the_editor() {
+    fun back_from_the_export_goes_to_the_overview() {
         val atExport = atLibrary.navigateTo(Export)
 
-        assertThat(atExport.navigateBack().current).isEqualTo(Document())
+        assertThat(atExport.navigateBack().current).isEqualTo(Overview)
     }
 
     @Test
-    fun back_from_the_crop_goes_to_the_editor_and_from_there_to_the_library() {
+    fun back_from_the_crop_goes_to_the_editor_then_the_overview_then_the_library() {
         val atCrop = atLibrary.navigateTo(EditImage)
 
         assertThat(atCrop.navigateBack().current).isEqualTo(Document())
-        assertThat(atCrop.navigateBack().navigateBack().current).isEqualTo(Library)
+        assertThat(atCrop.navigateBack().navigateBack().current).isEqualTo(Overview)
+        assertThat(atCrop.navigateBack().navigateBack().navigateBack().current).isEqualTo(Library)
     }
 
     @Test

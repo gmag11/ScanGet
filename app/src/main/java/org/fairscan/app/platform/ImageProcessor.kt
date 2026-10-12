@@ -47,7 +47,10 @@ import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 import kotlin.math.min
 
-class ImageProcessor(private val thumbnailSizePx: Int) : ImageTransformations {
+class ImageProcessor(
+    private val thumbnailSizePx: Int,
+    private val gridThumbnailSizePx: Int = thumbnailSizePx,
+) : ImageTransformations {
 
     override fun rotate(input: EncodedImage, rotationDegrees: Int): EncodedImage {
         return transform(input, ExportQuality.BALANCED.jpegQuality) {
@@ -55,8 +58,14 @@ class ImageProcessor(private val thumbnailSizePx: Int) : ImageTransformations {
         }
     }
 
-    override fun resizeToThumbnail(input: EncodedImage): EncodedImage {
-        val maxSize = thumbnailSizePx.toFloat()
+    override fun resizeToThumbnail(input: EncodedImage): EncodedImage =
+        resizeTo(input, thumbnailSizePx)
+
+    override fun resizeToGridThumbnail(input: EncodedImage): EncodedImage =
+        resizeTo(input, gridThumbnailSizePx)
+
+    private fun resizeTo(input: EncodedImage, maxSizePx: Int): EncodedImage {
+        val maxSize = maxSizePx.toFloat()
         return transform(input, 85) { src ->
             val ratio = min(maxSize / src.width(), maxSize / src.height())
             val newW = (src.width() * ratio).toDouble()

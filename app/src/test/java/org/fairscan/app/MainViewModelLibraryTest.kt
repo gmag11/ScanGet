@@ -19,7 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -36,6 +36,7 @@ import org.fairscan.app.domain.EncodedImage
 import org.fairscan.app.domain.Jpeg
 import org.fairscan.app.domain.PageMetadata
 import org.fairscan.app.domain.Rotation
+import org.fairscan.app.ui.Screen
 import org.fairscan.imageprocessing.Adjustments
 import org.fairscan.imageprocessing.ColorMode
 import org.fairscan.imageprocessing.ColorMode.COLOR
@@ -70,8 +71,17 @@ class MainViewModelLibraryTest {
 
     @After
     fun tearDown() {
-        if (this::viewModel.isInitialized) viewModel.viewModelScope.cancel()
-        if (this::scope.isInitialized) scope.cancel()
+        // Coroutines of the view model may still be finishing on IO threads: let them end while Main
+        // exists, or they fail when they try to resume on it and the failure lands on another test
+        Dispatchers.setMain(kotlinx.coroutines.test.UnconfinedTestDispatcher())
+        kotlinx.coroutines.runBlocking {
+            if (this@MainViewModelLibraryTest::viewModel.isInitialized) {
+                viewModel.viewModelScope.coroutineContext[kotlinx.coroutines.Job]?.cancelAndJoin()
+            }
+            if (this@MainViewModelLibraryTest::scope.isInitialized) {
+                scope.coroutineContext[kotlinx.coroutines.Job]?.cancelAndJoin()
+            }
+        }
         Dispatchers.resetMain()
     }
 
@@ -223,5 +233,83 @@ class MainViewModelLibraryTest {
 
         assertThat(viewModel.isOpeningDocument.value).isFalse()
         assertThat(viewModel.documentUiState.value.currentPageIndex).isEqualTo(0)
+    }
+
+    @Test
+    fun `the name of the document being edited is known and follows renaming`() = runTest {
+        createViewModel()
+        addPages(1)
+        library().flush()
+        val id = viewModel.imageRepository.documentInfo().id
+        viewModel.startNewDocument()
+        awaitUntil { viewModel.imageRepository.documentInfo().id != id }
+        awaitUntil { viewModel.documentName.value == viewModel.imageRepository.documentInfo().name }
+        val generated = viewModel.documentName.value
+        assertThat(generated).isNotEmpty()
+
+        assertThat(viewModel.renameDocument("  Tax 2026  ")).isTrue()
+        awaitUntil { viewModel.documentName.value == "Tax 2026" }
+
+        assertThat(viewModel.imageRepository.documentInfo().name).isEqualTo("Tax 2026")
+    }
+
+    @Test
+    fun `a blank name does not rename the document`() = runTest {
+        createViewModel()
+        addPages(1)
+        awaitUntil { viewModel.documentName.value.isNotEmpty() }
+        val before = viewModel.documentName.value
+
+        assertThat(viewModel.renameDocument("")).isFalse()
+        assertThat(viewModel.renameDocument("   ")).isFalse()
+
+        assertThat(viewModel.imageRepository.documentInfo().name).isEqualTo(before)
+        assertThat(viewModel.documentName.value).isEqualTo(before)
+    }
+
+    @Test
+    fun `opening a document shows its name`() = runTest {
+        createViewModel()
+        addPages(1)
+        val first = viewModel.imageRepository.documentInfo().id
+        viewModel.renameDocument("Receipts")
+        awaitUntil { viewModel.documentName.value == "Receipts" }
+        library().flush()
+        viewModel.startNewDocument()
+        awaitUntil { viewModel.imageRepository.documentInfo().id != first }
+        awaitUntil { viewModel.documentName.value != "Receipts" }
+        var opened = false
+
+        viewModel.openDocument(first) { opened = true }
+        awaitUntil { opened && viewModel.documentName.value == "Receipts" }
+
+        assertThat(viewModel.documentName.value).isEqualTo("Receipts")
+    }
+
+    @Test
+    fun `deleting the document being edited removes it and shows the library`() = runTest {
+        createViewModel()
+        addPages(2)
+        library().flush()
+        val id = viewModel.imageRepository.documentInfo().id
+
+        viewModel.deleteCurrentDocument()
+        awaitUntil { viewModel.currentScreen.value == Screen.Main.Library }
+
+        assertThat(store.readMetadata(id)).isNull()
+        assertThat(viewModel.imageRepository.pages()).isEmpty()
+        assertThat(viewModel.imageRepository.documentInfo().id).isNotEqualTo(id)
+    }
+
+    @Test
+    fun `the view model can be created when its first coroutines run at once, as on Android`() = runTest {
+        // On Android viewModelScope runs on Main.immediate: the coroutines launched while the view model
+        // is being built start before the end of its constructor, and use state declared further down
+        Dispatchers.setMain(kotlinx.coroutines.test.UnconfinedTestDispatcher())
+
+        createViewModel()
+
+        awaitUntil { viewModel.documentName.value.isNotEmpty() }
+        assertThat(viewModel.documentName.value).isNotEmpty()
     }
 }

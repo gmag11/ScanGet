@@ -175,4 +175,6 @@
     <string name="library_delete_message">Se eliminarán las capturas originales. Los archivos exportados se conservan.</string>
     <string name="library_opening">Abriendo…</string>
     <string name="library_sharing">Preparando…</string>
+    <string name="overview_delete_document">Eliminar documento</string>
+    <string name="overview_rename_document">Renombrar documento</string>
 </resources>

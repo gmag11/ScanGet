@@ -198,22 +198,31 @@ fun LibraryScreen(
         )
     }
     deleting?.let { item ->
-        AlertDialog(
-            onDismissRequest = { deleting = null },
-            title = { Text(stringResource(R.string.library_delete_title)) },
-            text = { Text(stringResource(R.string.library_delete_message)) },
-            confirmButton = {
-                TextButton(onClick = { actions.onDelete(item.id); deleting = null }) {
-                    Text(stringResource(R.string.delete), fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleting = null }) {
-                    Text(stringResource(R.string.cancel), fontWeight = FontWeight.Bold)
-                }
-            },
+        DeleteDocumentDialog(
+            onConfirm = { actions.onDelete(item.id); deleting = null },
+            onDismiss = { deleting = null },
         )
     }
+}
+
+/** Asks whether to delete a document, which also deletes its original captures. */
+@Composable
+fun DeleteDocumentDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.library_delete_title)) },
+        text = { Text(stringResource(R.string.library_delete_message)) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(stringResource(R.string.delete), fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.cancel), fontWeight = FontWeight.Bold)
+            }
+        },
+    )
 }
 
 @Composable
@@ -490,8 +499,9 @@ private fun ScanButton(onClick: () -> Unit, enabled: Boolean) {
     )
 }
 
+/** Asks for the new name of a document, which is not accepted blank. */
 @Composable
-private fun RenameDialog(current: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+fun RenameDialog(current: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
     // The whole name is selected, so that typing replaces it
     var value by remember { mutableStateOf(TextFieldValue(current, TextRange(0, current.length))) }
     val focus = remember { FocusRequester() }

@@ -112,10 +112,11 @@ class ScanSessionContainer(
 ) {
     private val density = context.resources.displayMetrics.density
     private val thumbnailSizePx = (THUMBNAIL_SIZE_DP * density).toInt()
+    private val gridThumbnailSizePx = (GRID_THUMBNAIL_SIZE_DP * density).toInt()
 
     val imageRepository = ImageRepository(
         scanRootDir,
-        ImageProcessor(thumbnailSizePx),
+        ImageProcessor(thumbnailSizePx, gridThumbnailSizePx),
         scope,
         logger,
         documentNamer,

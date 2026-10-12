@@ -306,4 +306,7 @@
     <string name="library_sharing">Preparing…</string>
     <!-- %1$s: date and time, %2$s: number of pages -->
     <string name="library_document_info" translatable="false">%1$s · %2$s</string>
+    <!-- Document overview screen (grid of pages) -->
+    <string name="overview_delete_document">Delete document</string>
+    <string name="overview_rename_document">Rename document</string>
 </resources>

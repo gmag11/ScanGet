@@ -90,6 +90,7 @@ import org.fairscan.app.ui.screens.setup.LibraryFolderEvent
 import org.fairscan.app.ui.screens.library.LibraryActions
 import org.fairscan.app.ui.screens.library.LibraryScreen
 import org.fairscan.app.ui.screens.library.LibraryViewModel
+import org.fairscan.app.ui.screens.overview.DocumentOverviewScreen
 import org.fairscan.app.ui.screens.setup.LibraryFolderDialogs
 import org.fairscan.app.ui.screens.settings.LibraryFolderSetting
 import org.fairscan.app.ui.screens.settings.SettingsScreen
@@ -232,7 +233,7 @@ class MainActivity : ComponentActivity() {
                             uiState = libraryState,
                             navigation = navigation,
                             actions = LibraryActions(
-                                onOpen = { id -> viewModel.openDocument(id) { navigation.toDocumentScreen() } },
+                                onOpen = { id -> viewModel.openDocument(id) { navigation.toOverviewScreen() } },
                                 onScan = {
                                     viewModel.startNewDocument()
                                     navigation.toCameraScreen()
@@ -259,6 +260,27 @@ class MainActivity : ComponentActivity() {
                             loadCover = library::loadCover,
                             busy = isOpening,
                             sharingId = sharingId,
+                        )
+                    }
+                    is Screen.Main.Overview -> {
+                        BackHandler { navigation.back() }
+                        val documentName by viewModel.documentName.collectAsStateWithLifecycle()
+                        DocumentOverviewScreen(
+                            documentName = documentName,
+                            document = document,
+                            navigation = navigation,
+                            onPageClick = { index -> viewModel.navigateTo(Screen.Main.Document(index)) },
+                            onPageReorder = { id, index -> viewModel.movePage(id, index) },
+                            onAddPage = navigation.toCameraScreen,
+                            onExport = {
+                                // From the pages of the document, all of it is exported (from the page
+                                // editor, the page being edited)
+                                viewModel.requestExportAllPages()
+                                navigation.toExportScreen()
+                            },
+                            onRename = viewModel::renameDocument,
+                            onDeleteDocument = viewModel::deleteCurrentDocument,
+                            loadThumbnail = viewModel::gridThumbnail,
                         )
                     }
                     is Screen.Main.LibrarySetup -> {
@@ -289,7 +311,10 @@ class MainActivity : ComponentActivity() {
                             liveAnalysisState,
                             importState,
                             onImageAnalyzed = { image -> cameraViewModel.liveAnalysis(image) },
-                            onFinalizePressed = onExportClick,
+                            // With the library, the pages of the document come before exporting it
+                            onFinalizePressed =
+                                if (launchMode == LaunchMode.EXTERNAL_SCAN_TO_PDF) onExportClick
+                                else navigation.toOverviewScreen,
                             cameraPermission = cameraPermission,
                             onImportClicked = {
                                 cameraViewModel.onImportClicked()
@@ -713,6 +738,7 @@ class MainActivity : ComponentActivity() {
         toCameraScreen = { viewModel.navigateTo(Screen.Main.Camera) },
         toEditImageScreen = { viewModel.navigateTo(Screen.Main.EditImage) },
         toDocumentScreen = { viewModel.navigateTo(Screen.Main.Document()) },
+        toOverviewScreen = { viewModel.navigateTo(Screen.Main.Overview) },
         toExportScreen = { viewModel.navigateTo(Screen.Main.Export) },
         toAboutScreen = { viewModel.navigateTo(Screen.Overlay.About) },
         toLibrariesScreen = { viewModel.navigateTo(Screen.Overlay.Libraries) },

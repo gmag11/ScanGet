@@ -758,6 +758,56 @@ class ImageRepositoryTest {
         collector.cancel()
     }
 
+    @Test
+    fun `grid thumbnails are bigger than the strip's, and each size is made once`() = runTest {
+        var strips = 0
+        var grids = 0
+        val transformations = object : ImageTransformations {
+            override fun rotate(input: EncodedImage, rotationDegrees: Int): EncodedImage = input
+            override fun resizeToThumbnail(input: EncodedImage): Jpeg {
+                strips++; return jpeg(input.bytes[0], 1)
+            }
+            override fun resizeToGridThumbnail(input: EncodedImage): Jpeg {
+                grids++; return jpeg(input.bytes[0], 2, 2)
+            }
+            override fun process(source: Jpeg, metadata: PageMetadata, colorMode: ColorMode,
+                                 adjustments: Adjustments): Jpeg = throw UnsupportedOperationException()
+        }
+        val repo = ImageRepository(getFilesDir(), transformations, testScope, Logger { _, _, _ -> })
+        repo.add(jpeg(101, 102, 103), jpeg(51), metadata1, COLOR)
+        val key = repo.pages().first().key()
+
+        val strip = repo.getThumbnail(key)!!
+        val grid = repo.getGridThumbnail(key)!!
+        repo.getThumbnail(key); repo.getGridThumbnail(key); repo.getGridThumbnail(key)
+
+        assertThat(strip.bytes).isEqualTo(byteArrayOf(101, 1))
+        assertThat(grid.bytes).isEqualTo(byteArrayOf(101, 2, 2))
+        assertThat(strips).isEqualTo(1)
+        assertThat(grids).isEqualTo(1)
+    }
+
+    @Test
+    fun `a transformation without a grid size gives the same thumbnail for the grid`() = runTest {
+        val repo = repo(resizeToThumbnail = { input -> jpeg(input.bytes[0], 7) })
+        repo.add(jpeg(101, 102), jpeg(51), metadata1, COLOR)
+        val key = repo.pages().first().key()
+
+        assertThat(repo.getGridThumbnail(key)!!.bytes).isEqualTo(repo.getThumbnail(key)!!.bytes)
+    }
+
+    @Test
+    fun `grid thumbnails of a page that cannot be shown are null and clearing forgets them`() = runTest {
+        val repo = repo()
+        repo.add(jpeg(101), jpeg(51), metadata1, COLOR)
+        val key = repo.pages().first().key()
+        assertThat(repo.getGridThumbnail(key)).isNotNull()
+
+        repo.clear()
+
+        assertThat(repo.getGridThumbnail(key)).isNull()
+    }
+
     private fun processedDir(): File = File(getFilesDir(), PROCESSED_DIR_NAME)
     private fun sourceDir(): File = File(getFilesDir(), SOURCE_DIR_NAME)
 

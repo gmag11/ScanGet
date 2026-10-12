@@ -45,6 +45,7 @@ import org.fairscan.app.data.library.LibraryRepository
 import org.fairscan.app.data.library.LibraryStatus
 import org.fairscan.app.domain.CapturedPage
 import org.fairscan.app.domain.Rotation
+import org.fairscan.app.domain.PageViewKey
 import org.fairscan.app.domain.ScanPage
 import org.fairscan.app.platform.PreviewRenderer
 import org.fairscan.app.ui.NavigationState
@@ -80,12 +81,18 @@ class MainViewModel(
 
     private val _pages = MutableStateFlow<List<ScanPage>>(emptyList())
 
+    private val _documentName = MutableStateFlow("")
+
+    /** The name of the document being edited. */
+    val documentName: StateFlow<String> = _documentName
+
 
     init {
         viewModelScope.launch {
             val pages = imageRepository.pages()
 
             _pages.value = pages
+            refreshDocumentName()
 
             // Wait until the library location is known
             val status = libraryStatus?.filterNotNull()?.first()
@@ -405,7 +412,37 @@ class MainViewModel(
             withContext(Dispatchers.IO) {
                 library?.startNewDocument() ?: imageRepository.clear()
             }
+            refreshDocumentName()
         }
+    }
+
+    private suspend fun refreshDocumentName() {
+        _documentName.value = imageRepository.documentInfo().name
+    }
+
+    /** Renames the document being edited. A blank name is not accepted; returns whether it was. */
+    fun renameDocument(name: String): Boolean {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return false
+        viewModelScope.launch {
+            val id = imageRepository.documentInfo().id
+            library?.rename(id, trimmed) ?: imageRepository.rename(trimmed)
+            refreshDocumentName()
+        }
+        return true
+    }
+
+    /** Deletes the document being edited and goes back to the library. */
+    fun deleteCurrentDocument() {
+        viewModelScope.launch {
+            deleteDocument(imageRepository.documentInfo().id)
+            navigateTo(Screen.Main.Library)
+        }
+    }
+
+    /** A page as a thumbnail big enough for the grid of the overview. */
+    suspend fun gridThumbnail(key: PageViewKey): Bitmap? = withContext(Dispatchers.IO) {
+        imageRepository.getGridThumbnail(key)?.toBitmap()
     }
 
     private val _isOpeningDocument = MutableStateFlow(false)
@@ -423,6 +460,7 @@ class MainViewModel(
                 if (opened) {
                     _pages.value = imageRepository.pages()
                     _currentPageIndex.value = 0
+                    refreshDocumentName()
                     onOpened()
                 }
             } finally {
@@ -439,7 +477,10 @@ class MainViewModel(
         val library = library ?: return
         val wasCurrent = imageRepository.documentInfo().id == id
         library.delete(id)
-        if (wasCurrent) _pages.value = persistentListOf()
+        if (wasCurrent) {
+            _pages.value = persistentListOf()
+            refreshDocumentName()
+        }
     }
 
     // Set by the library for the screen it opens next, which uses it once

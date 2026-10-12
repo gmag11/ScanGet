@@ -26,6 +26,9 @@ interface ImageTransformations {
 
     fun resizeToThumbnail(input: EncodedImage): EncodedImage
 
+    /** A thumbnail for the grid of pages, bigger than [resizeToThumbnail]'s, which suits a strip. */
+    fun resizeToGridThumbnail(input: EncodedImage): EncodedImage = resizeToThumbnail(input)
+
     fun process(
         source: Jpeg,
         metadata: PageMetadata,

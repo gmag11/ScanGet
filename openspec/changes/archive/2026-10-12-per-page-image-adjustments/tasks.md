@@ -118,7 +118,7 @@ Unless stated otherwise, run Gradle and adb with `ANDROID_SERIAL=emulator-5554`.
   - high-quality PDF export keeps the adjustments and keeps B/W bitonal.
 
   Report the result to the owner.
-- [ ] 7.2 Open a document created before this change and confirm that its pages display and export
+- [x] 7.2 Open a document created before this change and confirm that its pages display and export
   unchanged, with the same processed file names in `files/scanned_pages/`. Verify with
   `adb shell run-as org.fairscan.app ls files/scanned_pages`.
 - [x] 7.3 Run the full JVM test suite and lint: `./gradlew test :app:lintDebug`. Verify both pass.

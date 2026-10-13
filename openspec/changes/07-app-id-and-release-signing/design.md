@@ -21,16 +21,23 @@ authority from `context.packageName`, so both follow the id. The only other ment
 - Release and debug builds signed with the owner's key without ever putting it in the repository.
 
 **Non-Goals:**
-- Renaming the Kotlin package or the label shown under the icon (`app_name`, strings that say
-  "FairScan"): possible later, independent of this change.
-- Changing the intent action (documented external contract), version numbers, APK file names,
-  F-Droid/Play metadata or links.
+- Renaming the Kotlin package, the theme or other internal names.
+- Changing the intent action (documented external contract), version numbers, F-Droid/Play
+  metadata or links, the default library folder name or the translations that do not mention the
+  app (they use the `app_name` string or none).
 - Migrating data from `org.fairscan.app` (another app for Android; the shared `FairScan` folder
   already carries the documents over).
 
 ## Decisions
 
-- **`applicationId` only.** `namespace` stays, so `R`, `BuildConfig` and every `package` line are
+- **Name:** `app_name` becomes "ScanGet" (it is `translatable="false"`, so one value serves every
+  language). The 11 mentions in `values/strings.xml` and the 9 in `values-es/strings.xml` are
+  reviewed: texts where the app speaks of itself ("Where should FairScan keep your documents?")
+  say ScanGet; texts that credit or link to the project (About, licenses) keep FairScan; "FairScan
+  document" as a concept in code, specs and error messages stays. The diagnostics report and the
+  e-mail subject that identify the app and its version say ScanGet. `DEFAULT_LIBRARY_FOLDER_NAME`
+  stays `FairScan`, which is what lets the new app reuse the documents already saved.
+- **`applicationId`.** `namespace` stays, so `R`, `BuildConfig` and every `package` line are
   untouched and the diff is one line.
 - **Key lookup order**, evaluated at configuration time, first match wins:
   1. `../keys/key.properties` relative to `rootDir` (`rootProject.file("../keys/key.properties")`);
@@ -47,7 +54,8 @@ authority from `context.packageName`, so both follow the id. The only other ment
   Gradle code, the file is outside the git root, and the build prints only which source it used
   ("Signing with ../keys/key.properties"). The existing `.gitignore` does not need an entry because
   the folder is not inside the project.
-- **ABI split APKs** keep their names (`FairScan-<version>-<abi>.apk`).
+- **ABI split APKs** are named `ScanGet-<version>-<abi>.apk` (the one line that builds the name).
+  Anything that referred to the old file name (scripts, notes) is updated.
 
 ## Risks / Trade-offs
 

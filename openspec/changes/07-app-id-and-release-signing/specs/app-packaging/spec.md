@@ -1,9 +1,29 @@
 ## ADDED Requirements
 
+### Requirement: App name
+The app SHALL call itself ScanGet: in the launcher, in the system lists of apps and in its own
+texts that speak of the app by its name. Texts that credit or link to the upstream FairScan project
+SHALL keep naming it. The default library folder name and the public intent action SHALL NOT change.
+
+#### Scenario: Launcher
+- **WHEN** the app is installed
+- **THEN** its icon is labeled "ScanGet"
+
+#### Scenario: Texts of the app
+- **WHEN** the library setup screen asks where the app should keep the documents
+- **THEN** it speaks of ScanGet, in English and in Spanish
+
+#### Scenario: Upstream credits
+- **WHEN** the user opens the About screen
+- **THEN** the credits and links to the upstream FairScan project still name it
+
+#### Scenario: Library folder
+- **WHEN** the library folder is offered for the first time
+- **THEN** its default name is still `FairScan`, so that documents already saved there are found
+
 ### Requirement: Application id
 The app SHALL be installed with the application id `net.gmartin.scanget`, so that it can be
-installed next to the upstream FairScan app (`org.fairscan.app`) without replacing it. The name
-shown to the user and the public intent action SHALL NOT change.
+installed next to the upstream FairScan app (`org.fairscan.app`) without replacing it.
 
 #### Scenario: Installed next to upstream
 - **WHEN** the app is installed on a device that already has `org.fairscan.app`

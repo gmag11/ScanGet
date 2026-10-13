@@ -54,6 +54,7 @@ import org.fairscan.app.domain.exportedPageNumbers
 import org.fairscan.app.domain.jpegsToExport
 import org.fairscan.app.domain.pagesForExport
 import org.fairscan.app.domain.pagesSuffix
+import org.fairscan.app.domain.PageOcrSource
 import org.fairscan.app.domain.pagesToExport
 import org.fairscan.app.domain.selectionAfterLongPress
 import org.fairscan.app.domain.selectionAfterTap
@@ -84,6 +85,18 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
     private val libraryLocations = container.libraryLocations
     private val libraryExporter = container.libraryExporter
 
+    private val libraryOcr = container.libraryOcr
+
+    /**
+     * Where the PDF of the working document gets the text of its pages from: the library keeps what
+     * was recognized for the document, so that it is not recognized again.
+     */
+    private fun ocrOfWorkingDocument(): suspend (ScanPage) -> PageOcrSource? = { page ->
+        val store = libraryLocations.currentStore()
+        if (store == null) null
+        else libraryOcr.exportSource(store, imageRepository.documentInfo().id, page)
+    }
+
     private val _events = MutableSharedFlow<ExportEvent>()
     val events = _events.asSharedFlow()
 
@@ -93,7 +106,7 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
         pageFilter: (List<ScanPage>) -> List<ScanPage>,
         onPageCompleted: (Int) -> Unit,
     ): ExportResult.Pdf = withContext(Dispatchers.IO) {
-        val pageToExports = pagesToExport(imageRepository, exportQuality, pageFilter)
+        val pageToExports = pagesToExport(imageRepository, exportQuality, pageFilter, ocrOfWorkingDocument())
         val pdf = fileManager.generatePdf(pageToExports, disableOcr, onPageCompleted)
         return@withContext ExportResult.Pdf(pdf.file, pdf.sizeInBytes, pdf.pageCount)
     }
@@ -497,7 +510,7 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
                     file
                 }
             } else {
-                pagesToExport(imageRepository, exportQuality, pageFilter(state)).map {
+                pagesToExport(imageRepository, exportQuality, pageFilter(state), ocrOfWorkingDocument()).map {
                     val pdf = fileManager.generatePdf(listOf(it), false) {}
                     val target = File(pdf.file.parentFile, nameOf(it.page) + ".pdf")
                     renameFile(pdf.file, target)

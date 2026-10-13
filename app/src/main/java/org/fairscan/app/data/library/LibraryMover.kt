@@ -80,6 +80,7 @@ class LibraryMover(private val clock: () -> Long = System::currentTimeMillis) {
         for (page in metadata.pages) {
             val source = from.readSource(id, page.id) ?: continue // a page without capture cannot be shown
             to.writeSource(targetId, page.id, source)
+            copyCache(from, to, id, targetId, page.id)
             pages += page
         }
         val copy: DocumentMetadataV3 = metadata.copy(id = targetId, pages = pages)
@@ -90,5 +91,15 @@ class LibraryMover(private val clock: () -> Long = System::currentTimeMillis) {
         // Complete and verified: the source copy can go (only its own files are removed)
         from.delete(id)
         return targetId
+    }
+
+    // The processed image and the OCR data can be made again: the move does not fail without them
+    private fun copyCache(from: LibraryStore, to: LibraryStore, id: String, targetId: String, pageId: String) {
+        runCatching {
+            from.processedPages(id)[pageId]?.let { processed ->
+                from.readProcessed(id, pageId)?.let { to.writeProcessed(targetId, pageId, processed.renderKey, processed.fileName, it) }
+            }
+            from.readOcr(id, pageId)?.let { to.writeOcr(targetId, pageId, it) }
+        }
     }
 }

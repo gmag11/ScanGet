@@ -14,7 +14,10 @@
  */
 package org.fairscan.app.domain
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.fairscan.app.data.ImageRepository
+import org.fairscan.app.data.PageRecognition
 import org.fairscan.app.platform.processedImage
 import org.fairscan.imageprocessing.ColorMode
 import org.fairscan.imageprocessing.EstimatedDimensions
@@ -27,10 +30,36 @@ fun interface ImageProvider<T> {
     suspend fun get(): T
 }
 
+/**
+ * The text of a page that is exported: what was already recognized for it, if it is still valid, and
+ * what to do with the text recognized while exporting it (to keep it for next time).
+ */
+class PageOcrSource(
+    val stored: PageRecognition?,
+    val onRecognized: (PageRecognition) -> Unit = {},
+)
+
 data class PageToExport<T>(
     val page: ScanPage,
     val image: ImageProvider<T>,
 ) {
+    /** Where the text layer of a PDF comes from; null means it is recognized and not kept. */
+    var ocr: PageOcrSource? = null
+        private set
+
+    fun withOcr(source: PageOcrSource?): PageToExport<T> = also { it.ocr = source }
+
+    /**
+     * The text for the PDF of this page: the stored one when there is one, otherwise what [recognize]
+     * finds (null when nothing can be recognized, which is not the same as a page without text),
+     * which is then given to [PageOcrSource.onRecognized] to be kept.
+     */
+    suspend fun recognizedText(recognize: suspend () -> PageRecognition?): PageRecognition? {
+        val source = ocr
+        source?.stored?.let { return it }
+        return recognize()?.also { source?.onRecognized?.invoke(it) }
+    }
+
     fun estimatedDimensions(): EstimatedDimensions? {
         val metadata = page.metadata
         if (metadata == null)
@@ -58,10 +87,11 @@ suspend fun pagesToExport(
     imageRepository: ImageRepository,
     exportQuality: ExportQuality,
     pageFilter: (List<ScanPage>) -> List<ScanPage> = { it },
+    ocrFor: suspend (ScanPage) -> PageOcrSource? = { null },
 ): List<PageToExport<EncodedImage>> {
 
     val pages = pageFilter(imageRepository.pages())
-    return when (exportQuality) {
+    val exports = when (exportQuality) {
         ExportQuality.BALANCED -> pages.map {
             PageToExport(it) { image(it, imageRepository) }
         }
@@ -90,6 +120,8 @@ suspend fun pagesToExport(
             }
         }
     }
+    // The text kept for the pages may be read from a slow location
+    return withContext(Dispatchers.IO) { exports.map { it.withOcr(ocrFor(it.page)) } }
 }
 
 suspend fun jpegsToExport(

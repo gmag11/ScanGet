@@ -16,6 +16,8 @@ package org.fairscan.app.data.library
 
 import org.assertj.core.api.Assertions.assertThat
 import org.fairscan.app.data.DocumentMetadataV3
+import org.fairscan.app.data.OcrWordV1
+import org.fairscan.app.data.PageOcrV1
 import org.fairscan.app.data.PageV2
 import org.junit.Rule
 import org.junit.Test
@@ -255,5 +257,145 @@ class FileLibraryStoreTest {
 
         assertThat(store.readMetadata("d1")!!.name).isEqualTo("Invoice")
         assertThat(store.list().map { it.info.id }).containsExactly("d1")
+    }
+
+    private fun ocr(key: String = "0badc0de", word: String = "hello") = PageOcrV1(
+        renderKey = key, imageWidth = 100, imageHeight = 200,
+        words = listOf(OcrWordV1(word, 1, 2, 30, 12, 10, 12)))
+
+    @Test
+    fun `a processed image is kept per page and replaced when the rendering changes`() {
+        store.writeMetadata(metadata("d1", pageIds = arrayOf("100", "200")))
+        store.writeProcessed("d1", "100", "aaaaaaaa", "Doc-page01.jpg", byteArrayOf(1))
+        store.writeProcessed("d1", "200", "bbbbbbbb", "Doc-page02.png", byteArrayOf(2))
+
+        assertThat(store.processedPages("d1")).containsOnlyKeys("100", "200")
+        assertThat(store.processedPages("d1")["200"]).isEqualTo(StoredProcessed("bbbbbbbb", "Doc-page02.png"))
+        assertThat(store.processedPages("d1")["200"]!!.isPng).isTrue()
+
+        // Cropped again: same name, new content
+        store.writeProcessed("d1", "100", "cccccccc", "Doc-page01.jpg", byteArrayOf(3))
+
+        assertThat(store.processedPages("d1")["100"]).isEqualTo(StoredProcessed("cccccccc", "Doc-page01.jpg"))
+        assertThat(store.readProcessed("d1", "100")).isEqualTo(byteArrayOf(3))
+        assertThat(File(root, "d1/processed").list()!!.toSet()).containsExactlyInAnyOrder("Doc-page01.jpg", "Doc-page02.png")
+    }
+
+    @Test
+    fun `a new rendering with another format or name leaves only the new file`() {
+        store.writeMetadata(metadata("d1", pageIds = arrayOf("100")))
+        store.writeProcessed("d1", "100", "aaaaaaaa", "Doc-page01.jpg", byteArrayOf(1))
+
+        store.writeProcessed("d1", "100", "bbbbbbbb", "Doc-page01.png", byteArrayOf(2))
+        assertThat(File(root, "d1/processed").list()!!.toSet()).containsExactly("Doc-page01.png")
+
+        store.writeProcessed("d1", "100", "cccccccc", "Other-page01.png", byteArrayOf(3))
+        assertThat(File(root, "d1/processed").list()!!.toSet()).containsExactly("Other-page01.png")
+        assertThat(store.processedPages("d1")).hasSize(1)
+    }
+
+    @Test
+    fun `processed images and ocr data are deleted with the page and with the document`() {
+        store.writeMetadata(metadata("d1", pageIds = arrayOf("100", "200")))
+        for (page in listOf("100", "200")) {
+            store.writeProcessed("d1", page, "aaaaaaaa", "Doc-page$page.jpg", byteArrayOf(1))
+            store.writeOcr("d1", page, ocr())
+        }
+
+        store.deleteProcessed("d1", "100")
+        store.deleteOcr("d1", "100")
+
+        assertThat(store.processedPages("d1")).containsOnlyKeys("200")
+        assertThat(store.ocrPageIds("d1")).containsExactly("200")
+        assertThat(store.readOcr("d1", "200")).isEqualTo(ocr())
+
+        store.delete("d1")
+
+        assertThat(File(root, "d1").exists()).isFalse()
+    }
+
+    @Test
+    fun `a file of the user is never overwritten by a processed image`() {
+        store.writeMetadata(metadata("d1", pageIds = arrayOf("100")))
+        File(root, "d1/processed").mkdirs()
+        File(root, "d1/processed/Doc-page01.jpg").writeText("mine")
+
+        store.writeProcessed("d1", "100", "aaaaaaaa", "Doc-page01.jpg", byteArrayOf(1))
+
+        assertThat(File(root, "d1/processed/Doc-page01.jpg").readText()).isEqualTo("mine")
+        assertThat(store.processedPages("d1").getValue("100").fileName).isEqualTo("100.aaaaaaaa.jpg")
+        assertThat(store.readProcessed("d1", "100")).isEqualTo(byteArrayOf(1))
+        // Nor can a rename take it
+        assertThat(store.renameProcessed("d1", "100", "Doc-page01.jpg")).isFalse()
+
+        store.delete("d1")
+
+        assertThat(File(root, "d1/processed/Doc-page01.jpg").readText()).isEqualTo("mine")
+    }
+
+    @Test
+    fun `renaming moves the image and refuses a name that is taken`() {
+        store.writeMetadata(metadata("d1", pageIds = arrayOf("100", "200")))
+        store.writeProcessed("d1", "100", "aaaaaaaa", "A-page01.jpg", byteArrayOf(1))
+        store.writeProcessed("d1", "200", "bbbbbbbb", "A-page02.jpg", byteArrayOf(2))
+
+        assertThat(store.renameProcessed("d1", "100", "B-page01.jpg")).isTrue()
+        assertThat(store.renameProcessed("d1", "100", "A-page02.jpg")).isFalse()
+
+        assertThat(store.readProcessed("d1", "100")).isEqualTo(byteArrayOf(1))
+        assertThat(File(root, "d1/processed").list()!!.toSet()).containsExactlyInAnyOrder("B-page01.jpg", "A-page02.jpg")
+    }
+
+    @Test
+    fun `images saved before they had a readable name are still found`() {
+        store.writeMetadata(metadata("d1", pageIds = arrayOf("100")))
+        File(root, "d1/processed").mkdirs()
+        File(root, "d1/processed/100.0badc0de.png").writeBytes(byteArrayOf(5))
+
+        assertThat(store.processedPages("d1")).containsOnlyKeys("100")
+        assertThat(store.processedPages("d1")["100"]).isEqualTo(StoredProcessed("0badc0de", "100.0badc0de.png"))
+        assertThat(store.readProcessed("d1", "100")).isEqualTo(byteArrayOf(5))
+
+        store.delete("d1")
+
+        assertThat(File(root, "d1").exists()).isFalse()
+    }
+
+    @Test
+    fun `ocr data that cannot be read is treated as missing`() {
+        store.writeMetadata(metadata("d1", pageIds = arrayOf("100")))
+        store.writeOcr("d1", "100", ocr())
+        File(root, "d1/ocr/100.json").writeText("not json")
+
+        assertThat(store.readOcr("d1", "100")).isNull()
+    }
+
+    @Test
+    fun `files of the user inside the folders of a document are never touched`() {
+        store.writeMetadata(metadata("d1", pageIds = arrayOf("100")))
+        store.writeProcessed("d1", "100", "aaaaaaaa", "Doc-page01.jpg", byteArrayOf(1))
+        store.writeOcr("d1", "100", ocr())
+        File(root, "d1/processed/notes.txt").writeText("mine")
+        File(root, "d1/ocr/mine.json").writeText("{}")
+        File(root, "d1/sources").mkdirs()
+        File(root, "d1/sources/photo.png").writeText("mine")
+
+        store.writeProcessed("d1", "100", "bbbbbbbb", "Doc-page01.jpg", byteArrayOf(2))
+        store.deleteProcessed("d1", "100")
+        store.deleteOcr("d1", "100")
+        store.delete("d1")
+
+        assertThat(File(root, "d1/processed/notes.txt").readText()).isEqualTo("mine")
+        assertThat(File(root, "d1/ocr/mine.json").readText()).isEqualTo("{}")
+        assertThat(File(root, "d1/sources/photo.png").readText()).isEqualTo("mine")
+        assertThat(store.list()).isEmpty()
+    }
+
+    @Test
+    fun `a document being written with its processed images is not foreign`() {
+        store.writeSource("d1", "100", byteArrayOf(1))
+        store.writeProcessed("d1", "100", "aaaaaaaa", "Doc-page01.jpg", byteArrayOf(1))
+
+        assertThat(store.isForeign("d1")).isFalse()
     }
 }

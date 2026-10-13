@@ -85,6 +85,7 @@ fun SettingsScreen(
     uiState: SettingsUiState,
     onDefaultColorModeChanged: (DefaultColorMode) -> Unit,
     onTorchAlwaysOnChanged: (Boolean) -> Unit,
+    onOcrOnSaveChanged: (Boolean) -> Unit,
     onChooseDirectoryClick: () -> Unit,
     onResetExportDirClick: () -> Unit,
     onExportFormatChanged: (ExportFormat) -> Unit,
@@ -106,6 +107,7 @@ fun SettingsScreen(
             uiState,
             onDefaultColorModeChanged,
             onTorchAlwaysOnChanged,
+            onOcrOnSaveChanged,
             onChooseDirectoryClick,
             onResetExportDirClick,
             onExportFormatChanged,
@@ -123,6 +125,7 @@ private fun SettingsContent(
     uiState: SettingsUiState,
     onDefaultColorModeChanged: (DefaultColorMode) -> Unit,
     onTorchAlwaysOnChanged: (Boolean) -> Unit,
+    onOcrOnSaveChanged: (Boolean) -> Unit,
     onChooseDirectoryClick: () -> Unit,
     onResetExportDirClick: () -> Unit,
     onExportFormatChanged: (ExportFormat) -> Unit,
@@ -178,6 +181,22 @@ private fun SettingsContent(
                 value = uiState.torchAlwaysOn,
                 role = Role.Switch,
                 onValueChange = onTorchAlwaysOnChanged,
+            ),
+        )
+
+        ListItem(
+            headlineContent = { Text(stringResource(R.string.settings_ocr_on_save)) },
+            supportingContent = { Text(stringResource(R.string.settings_ocr_on_save_summary)) },
+            trailingContent = {
+                Switch(
+                    checked = uiState.ocrOnSave,
+                    onCheckedChange = onOcrOnSaveChanged,
+                )
+            },
+            modifier = Modifier.toggleable(
+                value = uiState.ocrOnSave,
+                role = Role.Switch,
+                onValueChange = onOcrOnSaveChanged,
             ),
         )
 
@@ -461,6 +480,7 @@ fun SettingsScreenPreview(uiState: SettingsUiState, library: LibraryFolderSettin
             uiState,
             onDefaultColorModeChanged = {},
             onTorchAlwaysOnChanged = {},
+            onOcrOnSaveChanged = {},
             onChooseDirectoryClick = {},
             onResetExportDirClick = {},
             onExportFormatChanged = {},

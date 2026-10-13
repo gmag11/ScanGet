@@ -24,6 +24,7 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.fairscan.app.data.FileLogger
 import org.fairscan.app.data.FileManager
@@ -33,6 +34,7 @@ import org.fairscan.app.data.library.AndroidLibraryPlatform
 import org.fairscan.app.data.library.LibraryExporter
 import org.fairscan.app.data.library.LibraryIndex
 import org.fairscan.app.data.library.LibraryLocations
+import org.fairscan.app.data.library.LibraryOcr
 import org.fairscan.app.domain.ImageSegmentationService
 import org.fairscan.app.domain.OcrService
 import org.fairscan.app.platform.AndroidImageLoader
@@ -87,6 +89,13 @@ class AppContainer(context: Context) {
         legacyDirs = listOf(File(context.filesDir, "library")),
     )
     val libraryIndex = LibraryIndex(File(context.filesDir, "library-index.json"))
+    /** Recognizes the text of the pages saved in the library, in the background. */
+    val libraryOcr = LibraryOcr(
+        recognizer = ocrService,
+        enabled = { settingsRepository.ocrOnSave.first() },
+        scope = scope,
+        logger = logger,
+    )
     /** Makes the files to share of documents of the library, without opening them. */
     val libraryExporter = LibraryExporter(
         workDir = File(context.cacheDir, "library-export"),
@@ -94,6 +103,7 @@ class AppContainer(context: Context) {
         transformations = ImageProcessor(THUMBNAIL_SIZE_DP),
         fileManager = fileManager,
         logger = logger,
+        libraryOcr = libraryOcr,
     )
 
     init {

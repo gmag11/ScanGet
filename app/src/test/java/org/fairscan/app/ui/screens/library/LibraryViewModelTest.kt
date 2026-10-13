@@ -27,10 +27,13 @@ import org.fairscan.app.data.DocumentInfo
 import org.fairscan.app.data.ImageRepository
 import org.fairscan.app.data.ImageTransformations
 import org.fairscan.app.data.Logger
+import org.fairscan.app.data.OcrWordV1
+import org.fairscan.app.data.PageOcrV1
 import org.fairscan.app.data.library.FileLibraryStore
 import org.fairscan.app.data.library.LastOpenedDocument
 import org.fairscan.app.data.library.LibraryEntry
 import org.fairscan.app.data.library.LibraryRepository
+import org.fairscan.app.data.library.normalizeForSearch
 import org.fairscan.app.domain.EncodedImage
 import org.fairscan.app.domain.Jpeg
 import org.fairscan.app.domain.PageMetadata
@@ -135,6 +138,23 @@ class LibrarySearchTest {
         assertThat(filterDocuments(docs, "camion").map { it.id }).containsExactly("4")
         assertThat(filterDocuments(docs, "CAMIÓN").map { it.id }).containsExactly("4")
         assertThat(filterDocuments(listOf(item("5", "Camion")), "camión").map { it.id }).containsExactly("5")
+    }
+
+    @Test
+    fun `the recognized text is searched too, without capitals or accents`() {
+        val texts = mapOf("2" to normalizeForSearch("Pago de la HIPOTECA del mes"))
+
+        assertThat(filterDocuments(docs, "hipoteca", texts).map { it.id }).containsExactly("2")
+        assertThat(filterDocuments(docs, "Hipotéca", texts).map { it.id }).containsExactly("2")
+        assertThat(filterDocuments(docs, "fact", texts).map { it.id }).containsExactly("1", "3")
+    }
+
+    @Test
+    fun `a document without recognized text is only found by name`() {
+        val texts = mapOf("2" to "hipoteca")
+
+        assertThat(filterDocuments(docs, "hipoteca", texts).map { it.id }).doesNotContain("1", "3", "4")
+        assertThat(filterDocuments(docs, "luz", texts).map { it.id }).containsExactly("1")
     }
 
     @Test
@@ -526,5 +546,28 @@ class LibraryViewModelTest {
 
         assertThat(images.pages()).isEmpty()
         assertThat(store.readMetadata(ids[1])).isNull()
+    }
+
+    @Test
+    fun `the search also finds a document by its recognized text`() = runTest {
+        setUpWith(backgroundScope)
+        val first = addDocument(1)
+        library.startNewDocument()
+        addDocument(2)
+        val page = store.readMetadata(first)!!.pages.single()
+        store.writeOcr(first, page.id, PageOcrV1(renderKey = "0badc0de", imageWidth = 10, imageHeight = 10,
+            words = listOf(OcrWordV1("Hipoteca", 0, 0, 5, 5, 5, 5), OcrWordV1("Santander", 6, 0, 9, 5, 5, 5))))
+        viewModel.refresh()
+        awaitUntil { !viewModel.uiState.value.isLoading }
+
+        viewModel.openSearch()
+        viewModel.onQueryChange("hipoteca")
+        awaitUntil { viewModel.uiState.value.shown.map { it.id } == listOf(first) }
+
+        assertThat(viewModel.uiState.value.shown.map { it.id }).containsExactly(first)
+        viewModel.onQueryChange("zzz")
+        assertThat(viewModel.uiState.value.shown).isEmpty()
+        viewModel.closeSearch()
+        assertThat(viewModel.uiState.value.shown).hasSize(2)
     }
 }

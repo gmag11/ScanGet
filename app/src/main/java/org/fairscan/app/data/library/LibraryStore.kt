@@ -16,6 +16,7 @@ package org.fairscan.app.data.library
 
 import org.fairscan.app.data.DocumentInfo
 import org.fairscan.app.data.DocumentMetadataV3
+import org.fairscan.app.data.PageOcrV1
 
 /** A document as listed by the library. */
 data class LibraryEntry(
@@ -31,6 +32,14 @@ data class FolderInspection(
     val otherItems: Int,
 ) {
     val isEmpty get() = fairScanDocuments == 0 && otherItems == 0
+}
+
+/**
+ * The processed image of a page as stored: made for the rendering [renderKey], in the file
+ * [fileName] (a PNG or a JPEG) of the processed images folder of the document.
+ */
+data class StoredProcessed(val renderKey: String, val fileName: String) {
+    val isPng get() = fileName.endsWith(".png")
 }
 
 /**
@@ -69,6 +78,34 @@ interface LibraryStore {
     fun writeSource(id: String, pageId: String, bytes: ByteArray)
 
     fun deleteSource(id: String, pageId: String)
+
+    /** The processed image kept for each page (by page id), which may be out of date. */
+    fun processedPages(id: String): Map<String, StoredProcessed>
+
+    fun readProcessed(id: String, pageId: String): ByteArray?
+
+    /**
+     * Keeps the processed image of the page in the file [fileName] (".jpg" or ".png"), replacing and
+     * removing the file it had. A file that is not this page's (another page's, or one of the user's)
+     * is never overwritten: the image then goes in a file named after the page and key, and can be
+     * given its name later with [renameProcessed].
+     */
+    fun writeProcessed(id: String, pageId: String, renderKey: String, fileName: String, bytes: ByteArray)
+
+    /** Renames the processed image of the page. Returns false, and changes nothing, if [fileName] is taken. */
+    fun renameProcessed(id: String, pageId: String, fileName: String): Boolean
+
+    fun deleteProcessed(id: String, pageId: String)
+
+    /** Ids of the pages that have OCR data. */
+    fun ocrPageIds(id: String): Set<String>
+
+    /** The OCR data of the page, or null if there is none (or it cannot be read). */
+    fun readOcr(id: String, pageId: String): PageOcrV1?
+
+    fun writeOcr(id: String, pageId: String, ocr: PageOcrV1)
+
+    fun deleteOcr(id: String, pageId: String)
 
     fun readCover(id: String): ByteArray?
 

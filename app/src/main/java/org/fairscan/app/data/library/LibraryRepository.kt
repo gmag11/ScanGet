@@ -29,6 +29,8 @@ import org.fairscan.app.data.LoadedDocument
 import org.fairscan.app.data.Logger
 import org.fairscan.app.data.toInfo
 import org.fairscan.app.domain.PageViewKey
+import org.fairscan.app.domain.Png
+import org.fairscan.app.domain.ScanPage
 
 private const val TAG = "LibraryRepository"
 private const val MAX_ID_ATTEMPTS = 5
@@ -63,6 +65,8 @@ class LibraryRepository(
     private val locationKey: () -> String? = { "library" },
     // The document opened or created last, which the library shows first
     private val lastOpened: LastOpenedDocument? = null,
+    // Recognizes the text of the pages that are saved, if wanted
+    private val ocr: LibraryOcr? = null,
 ) {
     private val mutex = Mutex()
 
@@ -126,6 +130,36 @@ class LibraryRepository(
     /** The id of the document opened or created last, if it is still wanted. */
     suspend fun lastOpenedId(): String? = withContext(ioDispatcher) { lastOpened?.lastOpenedId() }
 
+    private class CachedText(val updatedAt: Long, val ocrVersion: Int, val text: String)
+
+    private val texts = HashMap<String, CachedText>()
+
+    /**
+     * The recognized text of the documents [entries] that have some, for searching: the words of all
+     * their pages as one string, normalized (see [normalizeForSearch]). What was read is kept until
+     * the document or its text changes.
+     */
+    suspend fun searchTexts(entries: List<LibraryEntry>): Map<String, String> = withContext(ioDispatcher) {
+        val store = storeProvider() ?: return@withContext emptyMap()
+        val version = ocr?.version ?: 0
+        val result = HashMap<String, String>()
+        for (entry in entries) {
+            val id = entry.info.id
+            val cached = synchronized(texts) { texts[id] }
+            val text = if (cached != null && cached.updatedAt == entry.info.updatedAt && cached.ocrVersion == version) {
+                cached.text
+            } else {
+                val pageIds = store.ocrPageIds(id)
+                val order = store.readMetadata(id)?.pages?.map { it.id }.orEmpty().filter { it in pageIds }
+                order.mapNotNull { store.readOcr(id, it)?.text() }.joinToString(" ")
+                    .let { normalizeForSearch(it) }
+                    .also { synchronized(texts) { texts[id] = CachedText(entry.info.updatedAt, version, it) } }
+            }
+            if (text.isNotBlank()) result[id] = text
+        }
+        result
+    }
+
     suspend fun cover(id: String): ByteArray? = withContext(ioDispatcher) { storeProvider()?.readCover(id) }
 
     /**
@@ -154,6 +188,7 @@ class LibraryRepository(
             }
             lastWritten = metadata
             lastCover = null
+            writeProcessedImages(store, id)
             true
         }
     }
@@ -192,6 +227,11 @@ class LibraryRepository(
                 val store = store() ?: return@withContext
                 val metadata = store.readMetadata(id) ?: return@withContext
                 store.writeMetadata(metadata.copy(name = name, updatedAt = clock()))
+                try {
+                    syncProcessedNames(store, id, name, metadata.pages.map { it.id })
+                } catch (e: Exception) {
+                    logger.e(TAG, "Failed to rename the processed images of $id", e)
+                }
             }
         }
     }
@@ -240,6 +280,7 @@ class LibraryRepository(
             // A document that is new in the library is the one the user is working on
             if (!known) lastOpened?.setLastOpenedId(id)
             writeCover(store, snapshot)
+            writeProcessedImages(store, snapshot.id)
             return
         }
         logger.e(TAG, "Could not find a free id for the document", IllegalStateException("No free id"))
@@ -258,6 +299,35 @@ class LibraryRepository(
             }
         }
         for (pageId in stored - pageIds) store.deleteSource(snapshot.id, pageId)
+    }
+
+    /**
+     * Keeps the processed image of each page of the document, the page as it is rendered now: made
+     * again when the page was edited, removed when the page is gone. Then brings the OCR data up to
+     * date (see [LibraryOcr]). Nothing here is needed to open the document, so a failure is only logged.
+     */
+    private suspend fun writeProcessedImages(store: LibraryStore, id: String) {
+        try {
+            val pages = imageRepository.pages()
+            val name = imageRepository.documentInfo().name
+            val stored = store.processedPages(id)
+            for ((index, page) in pages.withIndex()) {
+                val renderKey = page.key().renderKey()
+                if (stored[page.id]?.renderKey == renderKey) continue
+                val image = imageRepository.image(page.key())
+                if (image == null) {
+                    logger.e(TAG, "No processed image to save for page ${page.id}", IllegalStateException("Missing image"))
+                    continue
+                }
+                val fileName = processedFileName(name, index, image is Png)
+                store.writeProcessed(id, page.id, renderKey, fileName, image.bytes)
+            }
+            for (pageId in stored.keys - pages.map { it.id }.toSet()) store.deleteProcessed(id, pageId)
+            syncProcessedNames(store, id, name, pages.map { it.id })
+            ocr?.pagesSaved(store, id, pages)
+        } catch (e: Exception) {
+            logger.e(TAG, "Failed to save the processed images of $id", e)
+        }
     }
 
     private suspend fun writeCover(store: LibraryStore, snapshot: DocumentMetadataV3) {

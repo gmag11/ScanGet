@@ -188,4 +188,6 @@
         <item quantity="other">¿Eliminar %d documentos?</item>
     </plurals>
     <string name="library_share_cancel">Cancelar el envío</string>
+    <string name="settings_ocr_on_save">Reconocer el texto al guardar un escaneo</string>
+    <string name="settings_ocr_on_save_summary">Se hace en segundo plano: los PDF se generan más rápido y se puede buscar por el texto de los documentos</string>
 </resources>

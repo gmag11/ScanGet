@@ -89,4 +89,20 @@ class SettingsRepositoryTest {
         assertThat(repo.torchAlwaysOn.first()).isFalse()
         file.delete()
     }
+
+    @Test
+    fun ocr_on_save_is_on_by_default_and_persists() = runTest {
+        val file = java.io.File.createTempFile("settings", ".preferences_pb").apply { delete() }
+        val scope = TestScope(UnconfinedTestDispatcher())
+        val dataStore = PreferenceDataStoreFactory.create(scope = scope.backgroundScope) { file }
+        val repo = SettingsRepository(ContextWrapper(null), dataStore, scope.backgroundScope)
+
+        assertThat(repo.ocrOnSave.first()).isTrue()
+        repo.setOcrOnSave(false)
+        assertThat(repo.ocrOnSave.first()).isFalse()
+        repo.setOcrOnSave(true)
+        assertThat(repo.ocrOnSave.first()).isTrue()
+        file.delete()
+        assertThat(SettingsUiState().ocrOnSave).isTrue()
+    }
 }

@@ -323,4 +323,6 @@
     <!-- %1$d: documents ready, %2$d: documents to share -->
     <string name="library_share_progress" translatable="false">%1$d / %2$d</string>
     <string name="library_share_cancel">Cancel sharing</string>
+    <string name="settings_ocr_on_save">Recognize text when saving a scan</string>
+    <string name="settings_ocr_on_save_summary">Done in the background, so PDFs are faster and documents can be searched by their text</string>
 </resources>

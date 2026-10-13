@@ -14,7 +14,9 @@
  */
 package org.fairscan.app.data.library
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -27,12 +29,14 @@ import org.fairscan.app.data.DocumentMetadataV3
 import org.fairscan.app.data.ImageRepository
 import org.fairscan.app.data.ImageTransformations
 import org.fairscan.app.data.Logger
+import org.fairscan.app.data.PageRecognition
 import org.fairscan.app.data.PageV2
 import org.fairscan.app.data.PROCESSED_DIR_NAME
 import org.fairscan.app.data.toAdjustments
 import org.fairscan.app.data.toSerializable
 import org.fairscan.app.domain.EncodedImage
 import org.fairscan.app.domain.Jpeg
+import org.fairscan.app.domain.TextRecognizer
 import org.fairscan.app.domain.PageMetadata
 import org.fairscan.app.domain.Rotation.R90
 import org.fairscan.imageprocessing.Adjustments
@@ -41,6 +45,8 @@ import org.fairscan.imageprocessing.ColorMode
 import org.fairscan.imageprocessing.ColorMode.COLOR
 import org.fairscan.imageprocessing.ColorMode.GRAYSCALE
 import org.fairscan.imageprocessing.ImageSize
+import org.fairscan.imageprocessing.OcrTextBox
+import org.fairscan.imageprocessing.ImageRect
 import org.fairscan.imageprocessing.OpticalMeasures
 import org.fairscan.imageprocessing.Point
 import org.fairscan.imageprocessing.Quad
@@ -84,14 +90,14 @@ class LibraryRepositoryTest {
     }
     private val lastOpened = FakeLastOpened()
 
-    private fun TestScope.session(name: String, debounce: Long = 500): Session {
+    private fun TestScope.session(name: String, debounce: Long = 500, ocr: LibraryOcr? = null): Session {
         currentStore = store
         val dir = folder.newFolder(name)
         val images = ImageRepository(dir, transformations, backgroundScope, Logger { _, _, _ -> },
             documentNamer = { "Scan $it" }, clock = { clockValue })
         val library = LibraryRepository({ currentStore }, images, backgroundScope, Logger { _, _, _ -> },
             debounceMillis = debounce, clock = { clockValue },
-            ioDispatcher = StandardTestDispatcher(testScheduler), lastOpened = lastOpened)
+            ioDispatcher = StandardTestDispatcher(testScheduler), lastOpened = lastOpened, ocr = ocr)
         runCurrent() // lets the autosave subscribe
         return Session(images, library, dir)
     }
@@ -609,5 +615,287 @@ class LibraryRepositoryTest {
 
         s.library.delete(secondId)
         assertThat(s.library.lastOpenedId()).isNull()
+    }
+
+    // --- Processed images and OCR data ---
+
+    private class FakeRecognizer(var available: Boolean = true) : TextRecognizer {
+        val calls = mutableListOf<Boolean>() // the "halve" flag of each call
+        var gate: CompletableDeferred<Unit>? = null
+        override val isAvailable get() = available
+        override suspend fun recognize(image: EncodedImage, halve: Boolean): PageRecognition? {
+            calls += halve
+            gate?.await()
+            return PageRecognition(listOf(OcrTextBox("word${calls.size}", ImageRect(1, 2, 3, 4), 10, 4)), 100, 200)
+        }
+    }
+
+    // advanceUntilIdle can return while a chain of dispatches between test dispatchers is unfinished
+    private fun TestScope.settle() = repeat(3) { advanceUntilIdle(); runCurrent() }
+
+    private fun TestScope.ocrOf(recognizer: TextRecognizer, enabled: Boolean = true) = LibraryOcr(
+        recognizer, { enabled }, backgroundScope, Logger { _, _, _ -> },
+        dispatcher = StandardTestDispatcher(testScheduler), ioDispatcher = StandardTestDispatcher(testScheduler))
+
+    @Test
+    fun `the processed image of each page is saved, replaced when edited and removed with the page`() = runTest {
+        val s = session("work")
+        s.addPage(1); s.addPage(2)
+        s.library.flush()
+        val id = store.list().single().info.id
+        val pages = s.images.pages()
+
+        assertThat(store.processedPages(id)).containsOnlyKeys(pages.map { it.id })
+        assertThat(store.processedPages(id).getValue(pages[0].id).renderKey).isEqualTo(pages[0].key().renderKey())
+
+        s.images.setRendering(pages[0].id, GRAYSCALE, Adjustments.NEUTRAL)
+        s.library.flush()
+
+        val edited = s.images.pages()[0]
+        assertThat(store.processedPages(id).getValue(edited.id).renderKey).isEqualTo(edited.key().renderKey())
+        assertThat(File(libraryDir, "$id/processed").list()!!).hasSize(2)
+
+        s.images.delete(pages[1].id)
+        s.library.flush()
+
+        assertThat(store.processedPages(id)).containsOnlyKeys(edited.id)
+    }
+
+    @Test
+    fun `a document opens without its processed images`() = runTest {
+        val s = session("work")
+        s.addPage(1)
+        s.library.flush()
+        val id = store.list().single().info.id
+        File(libraryDir, "$id/processed").deleteRecursively()
+        s.library.startNewDocument()
+
+        assertThat(s.library.open(id)).isTrue()
+
+        assertThat(s.images.pages()).hasSize(1)
+        assertThat(s.images.image(s.images.pages()[0].key())).isNotNull()
+    }
+
+    @Test
+    fun `a saved page is recognized in the background and its text is kept`() = runTest {
+        val recognizer = FakeRecognizer()
+        val s = session("work", ocr = ocrOf(recognizer))
+        s.addPage(1)
+        s.library.flush()
+        settle()
+
+        val id = store.list().single().info.id
+        val page = s.images.pages().single()
+        val ocr = store.readOcr(id, page.id)!!
+        assertThat(ocr.renderKey).isEqualTo(page.key().renderKey())
+        assertThat(ocr.words.map { it.text }).containsExactly("word1")
+        assertThat(recognizer.calls).hasSize(1)
+
+        // Saving again does not recognize it again
+        s.library.flush()
+        settle()
+        assertThat(recognizer.calls).hasSize(1)
+    }
+
+    @Test
+    fun `nothing is recognized when the setting is off or there is no language`() = runTest {
+        val off = FakeRecognizer()
+        val s = session("work", ocr = ocrOf(off, enabled = false))
+        s.addPage(1)
+        s.library.flush()
+        settle()
+
+        val none = FakeRecognizer(available = false)
+        val s2 = session("work2", ocr = ocrOf(none))
+        s2.addPage(1)
+        s2.library.flush()
+        settle()
+
+        assertThat(off.calls).isEmpty()
+        assertThat(none.calls).isEmpty()
+        assertThat(store.list().flatMap { store.ocrPageIds(it.info.id) }).isEmpty()
+    }
+
+    @Test
+    fun `editing a page drops its text and recognizes it again`() = runTest {
+        val recognizer = FakeRecognizer()
+        val s = session("work", ocr = ocrOf(recognizer))
+        s.addPage(1)
+        s.library.flush()
+        settle()
+        val id = store.list().single().info.id
+        val page = s.images.pages().single()
+
+        s.images.rotate(page.id, clockwise = true)
+        s.library.flush()
+        // The old text is gone at once, the new one comes with the recognition
+        assertThat(store.readOcr(id, page.id)?.renderKey).isNotEqualTo(page.key().renderKey())
+        settle()
+
+        val rotated = s.images.pages().single()
+        assertThat(store.readOcr(id, page.id)!!.renderKey).isEqualTo(rotated.key().renderKey())
+        assertThat(recognizer.calls).hasSize(2)
+    }
+
+    @Test
+    fun `a recognition of a page that was edited meanwhile is not kept`() = runTest {
+        val recognizer = FakeRecognizer().apply { gate = CompletableDeferred() }
+        val s = session("work", ocr = ocrOf(recognizer))
+        s.addPage(1)
+        s.library.flush()
+        runCurrent() // the recognition starts and waits
+        val id = store.list().single().info.id
+        val page = s.images.pages().single()
+
+        s.images.rotate(page.id, clockwise = true)
+        s.library.flush()
+        recognizer.gate!!.complete(Unit)
+        settle()
+
+        val rotated = s.images.pages().single()
+        assertThat(store.readOcr(id, page.id)!!.renderKey).isEqualTo(rotated.key().renderKey())
+        assertThat(recognizer.calls).hasSize(2)
+    }
+
+    @Test
+    fun `the text of a deleted page is removed`() = runTest {
+        val s = session("work", ocr = ocrOf(FakeRecognizer()))
+        s.addPage(1); s.addPage(2)
+        s.library.flush()
+        settle()
+        val id = store.list().single().info.id
+        val pages = s.images.pages()
+        assertThat(store.ocrPageIds(id)).hasSize(2)
+
+        s.images.delete(pages[0].id)
+        s.library.flush()
+        settle()
+
+        assertThat(store.ocrPageIds(id)).containsExactly(pages[1].id)
+    }
+
+    @Test
+    fun `a reopened document with pages that were not recognized is completed`() = runTest {
+        val recognizer = FakeRecognizer()
+        var enabled = false
+        val ocr = LibraryOcr(recognizer, { enabled }, backgroundScope, Logger { _, _, _ -> },
+            dispatcher = StandardTestDispatcher(testScheduler), ioDispatcher = StandardTestDispatcher(testScheduler))
+        val s = session("work", ocr = ocr)
+        s.addPage(1)
+        s.library.flush()
+        s.library.startNewDocument()
+        settle()
+        val id = store.list().single().info.id
+        val page = store.readMetadata(id)!!.pages.single()
+        assertThat(recognizer.calls).isEmpty()
+        assertThat(store.readOcr(id, page.id)).isNull()
+
+        enabled = true
+        s.library.open(id)
+        settle()
+
+        assertThat(store.readOcr(id, page.id)).isNotNull()
+        assertThat(recognizer.calls).hasSize(1)
+    }
+
+    @Test
+    fun `the searchable text of a document follows its recognition`() = runTest {
+        val ocr = ocrOf(FakeRecognizer())
+        val s = session("work", ocr = ocr)
+        s.addPage(1)
+        s.library.flush()
+        settle()
+        val entry = s.library.documents().single()
+
+        assertThat(s.library.searchTexts(listOf(entry))).containsEntry(entry.info.id, "word1")
+
+        // Editing the page recognizes it again: what was read before is not served any more
+        s.images.rotate(s.images.pages().single().id, clockwise = true)
+        s.library.flush()
+        settle()
+
+        assertThat(s.library.searchTexts(listOf(entry))).containsEntry(entry.info.id, "word2")
+    }
+
+    @Test
+    fun `a document without recognized text has no searchable text`() = runTest {
+        val s = session("work")
+        s.addPage(1)
+        s.library.flush()
+
+        assertThat(s.library.searchTexts(s.library.documents())).isEmpty()
+    }
+
+    private fun processedFiles(id: String) = File(libraryDir, "$id/processed").list()!!.toSet()
+
+    @Test
+    fun `cropping a page again replaces its processed image`() = runTest {
+        val s = session("work")
+        s.addPage(1); s.addPage(2)
+        s.library.flush()
+        val id = store.list().single().info.id
+        val before = processedFiles(id)
+        val page = s.images.pages()[0]
+
+        s.images.setUserQuad(page.id, Quad(Point(.1, .1), Point(.9, .1), Point(.9, .9), Point(.1, .9)))
+        s.library.flush()
+
+        val edited = s.images.pages()[0]
+        assertThat(edited.key().renderKey()).isNotEqualTo(page.key().renderKey())
+        assertThat(store.processedPages(id).getValue(edited.id).renderKey).isEqualTo(edited.key().renderKey())
+        assertThat(processedFiles(id)).hasSize(2).isEqualTo(before)
+    }
+
+    @Test
+    fun `processed images are named after the document and the page number`() = runTest {
+        val s = session("work")
+        s.addPage(1); s.addPage(2)
+        s.library.flush()
+        val id = store.list().single().info.id
+        val name = s.images.documentInfo().name
+
+        assertThat(processedFiles(id)).containsExactlyInAnyOrder("$name-page01.jpg", "$name-page02.jpg")
+
+        s.library.rename(id, "Invoice")
+        s.library.flush()
+
+        assertThat(processedFiles(id)).containsExactlyInAnyOrder("Invoice-page01.jpg", "Invoice-page02.jpg")
+        assertThat(store.readProcessed(id, s.images.pages()[1].id)).isNotNull()
+    }
+
+    @Test
+    fun `renaming a document that is not open renames its processed images`() = runTest {
+        val s = session("work")
+        s.addPage(1); s.addPage(2)
+        s.library.flush()
+        val id = store.list().single().info.id
+        s.library.startNewDocument()
+
+        s.library.rename(id, "Receipts")
+
+        assertThat(processedFiles(id)).containsExactlyInAnyOrder("Receipts-page01.jpg", "Receipts-page02.jpg")
+    }
+
+    @Test
+    fun `deleting or moving a page renumbers the processed images`() = runTest {
+        val s = session("work")
+        s.addPage(1); s.addPage(2); s.addPage(3)
+        s.library.flush()
+        val id = store.list().single().info.id
+        val name = s.images.documentInfo().name
+        val pages = s.images.pages()
+
+        s.images.delete(pages[0].id)
+        s.library.flush()
+
+        assertThat(processedFiles(id)).containsExactlyInAnyOrder("$name-page01.jpg", "$name-page02.jpg")
+        assertThat(store.processedPages(id).getValue(pages[1].id).fileName).isEqualTo("$name-page01.jpg")
+
+        s.images.movePage(pages[2].id, 0)
+        s.library.flush()
+
+        assertThat(store.processedPages(id).getValue(pages[2].id).fileName).isEqualTo("$name-page01.jpg")
+        assertThat(store.processedPages(id).getValue(pages[1].id).fileName).isEqualTo("$name-page02.jpg")
+        assertThat(processedFiles(id)).hasSize(2)
     }
 }

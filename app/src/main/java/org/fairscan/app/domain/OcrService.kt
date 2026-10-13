@@ -23,16 +23,22 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.fairscan.app.data.OcrLanguageRepository
+import org.fairscan.app.data.PageRecognition
 import org.fairscan.imageprocessing.ImageRect
 import org.fairscan.imageprocessing.OcrTextBox
 
 class OcrService(
     private val ocrLanguageRepository: OcrLanguageRepository,
     private val scope: CoroutineScope,
-) {
+) : TextRecognizer {
     private var tess: TessBaseAPI? = null
 
     private val mutex = Mutex()
+
+    @Volatile
+    private var ready = false
+
+    override val isAvailable get() = ready
 
     private var languageString = ""
     fun languageString() = languageString
@@ -47,6 +53,7 @@ class OcrService(
         mutex.withLock {
             tess?.recycle()
             tess = null
+            ready = false
 
             languageString = ocrLanguageRepository.buildTesseractLanguageString()
             if (languageString.isEmpty()) return
@@ -58,6 +65,18 @@ class OcrService(
                 return
             }
             tess = newTess
+            ready = true
+        }
+    }
+
+    override suspend fun recognize(image: EncodedImage, halve: Boolean): PageRecognition? {
+        if (!isAvailable) return null
+        val full = image.toBitmap() ?: return null
+        val bitmap = if (halve) halfSize(full) else full
+        return try {
+            PageRecognition(runOcr(bitmap), bitmap.width, bitmap.height)
+        } finally {
+            bitmap.recycle()
         }
     }
 
@@ -85,4 +104,11 @@ class OcrService(
     }
 
     private fun Rect.toImageRect(): ImageRect = ImageRect(left, top, right, bottom)
+}
+
+/** [bitmap] at half its size; [bitmap] itself is recycled. */
+fun halfSize(bitmap: Bitmap): Bitmap {
+    val scaled = Bitmap.createScaledBitmap(bitmap, bitmap.width / 2, bitmap.height / 2, true)
+    bitmap.recycle()
+    return scaled
 }

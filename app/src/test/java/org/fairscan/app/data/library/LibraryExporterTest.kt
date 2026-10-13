@@ -25,6 +25,7 @@ import org.fairscan.app.data.DocumentMetadataV3
 import org.fairscan.app.data.FileManager
 import org.fairscan.app.data.ImageTransformations
 import org.fairscan.app.data.Logger
+import org.fairscan.app.data.PageRecognition
 import org.fairscan.app.data.PageV2
 import org.fairscan.app.data.PdfWriter
 import org.fairscan.app.data.toSerializable
@@ -32,6 +33,9 @@ import org.fairscan.app.domain.EncodedImage
 import org.fairscan.app.domain.ExportQuality
 import org.fairscan.app.domain.Jpeg
 import org.fairscan.app.domain.PageMetadata
+import org.fairscan.app.domain.TextRecognizer
+import org.fairscan.imageprocessing.ImageRect
+import org.fairscan.imageprocessing.OcrTextBox
 import org.fairscan.app.ui.screens.settings.ExportFormat
 import org.fairscan.imageprocessing.Adjustments
 import org.fairscan.imageprocessing.ColorMode
@@ -201,5 +205,70 @@ class LibraryExporterTest {
         assertThat(cancelled).isTrue()
         assertThat(outputDir.listFiles().orEmpty()).isEmpty()
         assertThat(workDir.listFiles().orEmpty()).isEmpty()
+    }
+
+    // --- Text recognition kept in the library ---
+
+    private var recognitions = 0
+
+    // Like the real writer: the text of a page is the stored one or else it is recognized (and kept)
+    private val recognizingWriter = PdfWriter { pages, output, _, onPageCompleted ->
+        pages.forEachIndexed { index, page ->
+            page.recognizedText {
+                recognitions++
+                PageRecognition(listOf(OcrTextBox("word", ImageRect(0, 0, 5, 5), 5, 5)), 10, 20)
+            }
+            output.write(page.image.get().bytes)
+            onPageCompleted(index + 1)
+        }
+    }
+    private val noRecognizer = object : TextRecognizer {
+        override val isAvailable = false
+        override suspend fun recognize(image: EncodedImage, halve: Boolean): PageRecognition? = null
+    }
+    private val ocrExporter by lazy {
+        val ocr = LibraryOcr(noRecognizer, { false }, CoroutineScope(Job()), Logger { _, _, _ -> })
+        LibraryExporter(workDir, transformations, FileManager(pdfDir, outputDir, recognizingWriter),
+            Logger { _, _, _ -> }, ocr)
+    }
+
+    @Test
+    fun `a document that was recognized is exported again without recognizing it`() = runTest {
+        addDocument("d1", "Invoice", 1, 2, 3)
+
+        ocrExporter.export(store, listOf("d1"), ExportFormat.PDF, ExportQuality.BALANCED, outputDir) { _, _ -> }
+        assertThat(recognitions).isEqualTo(3)
+        assertThat(store.ocrPageIds("d1")).hasSize(3)
+
+        ocrExporter.export(store, listOf("d1"), ExportFormat.PDF, ExportQuality.BALANCED, outputDir) { _, _ -> }
+
+        assertThat(recognitions).isEqualTo(3)
+    }
+
+    @Test
+    fun `only the pages without text are recognized when exporting`() = runTest {
+        addDocument("d1", "Invoice", 1, 2, 3)
+        ocrExporter.export(store, listOf("d1"), ExportFormat.PDF, ExportQuality.BALANCED, outputDir) { _, _ -> }
+        recognitions = 0
+        store.deleteOcr("d1", "1001")
+
+        ocrExporter.export(store, listOf("d1"), ExportFormat.PDF, ExportQuality.BALANCED, outputDir) { _, _ -> }
+
+        assertThat(recognitions).isEqualTo(1)
+        assertThat(store.ocrPageIds("d1")).hasSize(3)
+    }
+
+    @Test
+    fun `the text kept for a page that was edited is not used`() = runTest {
+        addDocument("d1", "Invoice", 1)
+        ocrExporter.export(store, listOf("d1"), ExportFormat.PDF, ExportQuality.BALANCED, outputDir) { _, _ -> }
+        recognitions = 0
+        // The page is now rendered with another filter
+        val metadata = store.readMetadata("d1")!!
+        store.writeMetadata(metadata.copy(pages = metadata.pages.map { it.copy(colorMode = ColorMode.GRAYSCALE) }))
+
+        ocrExporter.export(store, listOf("d1"), ExportFormat.PDF, ExportQuality.BALANCED, outputDir) { _, _ -> }
+
+        assertThat(recognitions).isEqualTo(1)
     }
 }

@@ -559,6 +559,7 @@ class MainActivity : ComponentActivity() {
             settingsUiState,
             onDefaultColorModeChanged = { mode -> settingsViewModel.setDefaultColorMode(mode) },
             onTorchAlwaysOnChanged = settingsViewModel::setTorchAlwaysOn,
+            onOcrOnSaveChanged = settingsViewModel::setOcrOnSave,
             onChooseDirectoryClick = {
                 try {
                     launcher.launch(null)

@@ -51,6 +51,7 @@ class SettingsRepository(
     private val EXPORT_FORMAT = stringPreferencesKey("export_format")
     private val EXPORT_QUALITY = stringPreferencesKey("export_quality")
     private val TORCH_ALWAYS_ON = booleanPreferencesKey("torch_always_on")
+    private val OCR_ON_SAVE = booleanPreferencesKey("ocr_on_save")
     private val LIBRARY_LOCATION_KIND = stringPreferencesKey("library_location_kind")
     private val LIBRARY_LOCATION = stringPreferencesKey("library_location")
     private val LIBRARY_LOCATION_NAME = stringPreferencesKey("library_location_name")
@@ -61,6 +62,10 @@ class SettingsRepository(
 
     val torchAlwaysOn: Flow<Boolean> =
         dataStore.data.map { prefs -> prefs[TORCH_ALWAYS_ON] ?: false }
+
+    /** Whether the text of a page is recognized in the background when it is saved. */
+    val ocrOnSave: Flow<Boolean> =
+        dataStore.data.map { prefs -> prefs[OCR_ON_SAVE] ?: true }
 
     val exportDirUri: Flow<String?> =
         dataStore.data.map { prefs ->
@@ -108,6 +113,12 @@ class SettingsRepository(
     suspend fun setDefaultColorMode(mode: DefaultColorMode) {
         dataStore.edit { prefs ->
             prefs[DEFAULT_COLOR_MODE] = mode.name
+        }
+    }
+
+    suspend fun setOcrOnSave(enabled: Boolean) {
+        dataStore.edit { prefs ->
+            prefs[OCR_ON_SAVE] = enabled
         }
     }
 

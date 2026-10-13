@@ -52,6 +52,8 @@ class LibraryExporter(
     private val transformations: ImageTransformations,
     private val fileManager: FileManager,
     private val logger: Logger,
+    // Where the text of the pages is kept, so that it is not recognized again
+    private val libraryOcr: LibraryOcr? = null,
 ) {
 
     /**
@@ -115,7 +117,10 @@ class LibraryExporter(
                 }
             } else {
                 val context = currentCoroutineContext()
-                val generated = fileManager.generatePdf(pagesToExport(images, quality), disableOcr = false) {
+                val generated = fileManager.generatePdf(
+                    pagesToExport(images, quality) { page -> libraryOcr?.exportSource(store, id, page) },
+                    disableOcr = false,
+                ) {
                     // Called after each page: a cancelled export stops here
                     context.ensureActive()
                 }

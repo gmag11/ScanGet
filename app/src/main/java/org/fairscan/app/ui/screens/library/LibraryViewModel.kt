@@ -16,8 +16,6 @@ package org.fairscan.app.ui.screens.library
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import java.text.Normalizer
-import java.util.Locale
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
@@ -32,6 +30,7 @@ import kotlinx.coroutines.withContext
 import org.fairscan.app.data.Logger
 import org.fairscan.app.data.library.LibraryEntry
 import org.fairscan.app.data.library.LibraryRepository
+import org.fairscan.app.data.library.normalizeForSearch
 
 /** A document as the library shows it. [updatedAt] is in epoch milliseconds. */
 data class LibraryItem(
@@ -61,36 +60,42 @@ data class LibraryUiState(
     val shown: List<LibraryItem> get() = listOfNotNull(recent) + others
 }
 
-/** [text] without accents or capitals, so that "Camión" and "camion" are the same word. */
-internal fun normalizeForSearch(text: String): String =
-    Normalizer.normalize(text, Normalizer.Form.NFD)
-        .replace(Regex("\\p{M}+"), "")
-        .lowercase(Locale.ROOT)
-
-/** The [items] whose name contains [query], ignoring case and accents, in the same order. */
-fun filterDocuments(items: List<LibraryItem>, query: String): List<LibraryItem> {
+/**
+ * The [items] whose name contains [query], or whose recognized text does, ignoring case and accents,
+ * in the same order. [texts] holds the recognized text of the documents that have it, already
+ * normalized (see [normalizeForSearch]); the others are only found by name.
+ */
+fun filterDocuments(
+    items: List<LibraryItem>,
+    query: String,
+    texts: Map<String, String> = emptyMap(),
+): List<LibraryItem> {
     val wanted = normalizeForSearch(query.trim())
     if (wanted.isEmpty()) return items
-    return items.filter { normalizeForSearch(it.name).contains(wanted) }
+    return items.filter {
+        normalizeForSearch(it.name).contains(wanted) || texts[it.id]?.contains(wanted) == true
+    }
 }
 
 /**
  * The state of the library screen for [entries] (the documents with pages, most recently modified
  * first). Without a search the document opened last comes apart, once, and the rest follow in order.
  * While a query is typed there is no recent section: the documents that match are listed in order.
- * [selectedIds] are kept only as far as those documents are shown.
+ * [texts] is the recognized text of the documents, for the search. [selectedIds] are kept only as far
+ * as those documents are shown.
  */
 fun libraryUiState(
     entries: List<LibraryEntry>,
     lastOpenedId: String?,
     query: String? = null,
     selectedIds: Set<String> = emptySet(),
+    texts: Map<String, String> = emptyMap(),
 ): LibraryUiState {
     val items = entries
         .map { LibraryItem(it.info.id, it.info.name, it.info.updatedAt, it.pageCount) }
         .sortedByDescending { it.updatedAt }
     val (recent, others) = if (query != null) {
-        null to filterDocuments(items, query)
+        null to filterDocuments(items, query, texts)
     } else {
         val recent = items.firstOrNull { it.id == lastOpenedId }
         recent to items.filter { it !== recent }
@@ -120,10 +125,11 @@ class LibraryViewModel(
     private var lastOpenedId: String? = null
     private var query: String? = null
     private var selectedIds: Set<String> = emptySet()
+    private var texts: Map<String, String> = emptyMap()
 
     private fun publish() {
         val known = entries ?: return
-        _state.value = libraryUiState(known, lastOpenedId, query, selectedIds)
+        _state.value = libraryUiState(known, lastOpenedId, query, selectedIds, texts)
         // Selected documents that are not shown any more (deleted, or hidden by the search) are dropped
         selectedIds = _state.value.selectedIds
     }
@@ -143,6 +149,7 @@ class LibraryViewModel(
                 entries = library.documents()
                 lastOpenedId = library.lastOpenedId()
                 publish()
+                if (query != null) loadTexts()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -160,6 +167,19 @@ class LibraryViewModel(
         if (query != null) return
         query = ""
         publish()
+        viewModelScope.launch { loadTexts() }
+    }
+
+    // The recognized text is read once the search is open; until then documents are found by name
+    private suspend fun loadTexts() {
+        try {
+            texts = library.searchTexts(entries.orEmpty())
+            publish()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.e("Library", "Failed to read the text of the documents", e)
+        }
     }
 
     fun onQueryChange(text: String) {
@@ -172,6 +192,7 @@ class LibraryViewModel(
     fun closeSearch() {
         if (query == null) return
         query = null
+        texts = emptyMap()
         publish()
     }
 

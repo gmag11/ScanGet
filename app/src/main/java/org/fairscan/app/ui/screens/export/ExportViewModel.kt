@@ -66,6 +66,9 @@ import java.util.concurrent.CancellationException
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
+/** How far sharing several documents is: [done] of [total] are ready. */
+data class DocumentShareProgress(val done: Int, val total: Int)
+
 sealed interface ExportEvent {
     data object RequestSave : ExportEvent
     data class Share(val result: ExportResult) : ExportEvent
@@ -78,6 +81,8 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
     private val settingsRepository = container.settingsRepository
     private val ocrService = container.ocrService
     private val logger = container.logger
+    private val libraryLocations = container.libraryLocations
+    private val libraryExporter = container.libraryExporter
 
     private val _events = MutableSharedFlow<ExportEvent>()
     val events = _events.asSharedFlow()
@@ -352,6 +357,51 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
                 result.copy(jpegFiles = renamedFiles)
             }
         }
+
+    private val _documentShare = MutableStateFlow<DocumentShareProgress?>(null)
+
+    /** Progress of sharing several documents of the library, or null when that is not happening. */
+    val documentShare: StateFlow<DocumentShareProgress?> = _documentShare.asStateFlow()
+
+    private var documentShareJob: Job? = null
+
+    /**
+     * Shares the documents [ids] of the library, one file each (see [LibraryExporter]), in one share
+     * request, in the format and quality of the settings. [beforeExport] runs first, e.g. to save the
+     * document being edited, so that what is shared is what is on the screen. The document being
+     * edited is not touched.
+     */
+    fun shareDocuments(ids: List<String>, beforeExport: suspend () -> Unit = {}) {
+        if (ids.isEmpty() || documentShareJob?.isActive == true) return
+        _documentShare.value = DocumentShareProgress(0, ids.size)
+        documentShareJob = viewModelScope.launch {
+            try {
+                beforeExport()
+                val store = libraryLocations.currentStore() ?: error("The library is not available")
+                val quality = settingsRepository.exportQuality.first()
+                val format = settingsRepository.exportFormat.first()
+                val made = libraryExporter.export(store, ids, format, quality, preparationDir) { done, total ->
+                    _documentShare.value = DocumentShareProgress(done, total)
+                }
+                if (made.files.isNotEmpty()) {
+                    _events.emit(ExportEvent.Share(
+                        if (format == ExportFormat.JPEG) ExportResult.Jpeg(made.files, made.sizeInBytes)
+                        else ExportResult.Pdfs(made.files, made.sizeInBytes)))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logger.e("FairScan", "Failed to prepare the share of ${ids.size} documents", e)
+            } finally {
+                _documentShare.value = null
+            }
+        }
+    }
+
+    /** Stops [shareDocuments]; what it had made is removed. */
+    fun cancelDocumentShare() {
+        documentShareJob?.cancel()
+    }
 
     private val _isQuickSharing = MutableStateFlow(false)
 

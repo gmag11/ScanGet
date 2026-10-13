@@ -21,7 +21,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,7 +39,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Delete
@@ -50,6 +57,7 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -67,7 +75,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -86,7 +97,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
@@ -100,6 +113,7 @@ import org.fairscan.app.ui.components.AppOverflowMenu
 import org.fairscan.app.ui.components.MainActionButton
 import org.fairscan.app.ui.components.pageCountText
 import org.fairscan.app.ui.dummyNavigation
+import org.fairscan.app.ui.screens.export.DocumentShareProgress
 import org.fairscan.app.ui.theme.FairScanTheme
 
 /** What can be done from the library screen. Documents are identified by their id. */
@@ -113,6 +127,16 @@ data class LibraryActions(
     /** Returns whether the name was accepted (a blank name is not). */
     val onRename: (String, String) -> Boolean = { _, _ -> true },
     val onDelete: (String) -> Unit = {},
+    val onSearch: () -> Unit = {},
+    val onQueryChange: (String) -> Unit = {},
+    val onCloseSearch: () -> Unit = {},
+    val onStartSelection: (String) -> Unit = {},
+    val onToggleSelection: (String) -> Unit = {},
+    val onSelectAll: () -> Unit = {},
+    val onClearSelection: () -> Unit = {},
+    val onShareSelected: () -> Unit = {},
+    val onCancelShare: () -> Unit = {},
+    val onDeleteSelected: () -> Unit = {},
 )
 
 /**
@@ -120,7 +144,7 @@ data class LibraryActions(
  * and the actions to scan or import a new document.
  *
  * [busy] is true while a document is being opened; [sharingId] is the document being prepared for
- * sharing, if any.
+ * sharing, if any; [shareProgress] is the progress of sharing the selected documents, if any.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -131,17 +155,35 @@ fun LibraryScreen(
     loadCover: suspend (String) -> Bitmap?,
     busy: Boolean = false,
     sharingId: String? = null,
+    shareProgress: DocumentShareProgress? = null,
 ) {
     var renaming by remember { mutableStateOf<LibraryItem?>(null) }
     var deleting by remember { mutableStateOf<LibraryItem?>(null) }
+    var deletingSelected by remember { mutableStateOf(false) }
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    // Back leaves the selection first (keeping the search), then the search
+    BackHandler(enabled = uiState.isSelecting || uiState.isSearching) {
+        if (uiState.isSelecting) actions.onClearSelection() else actions.onCloseSearch()
+    }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.app_name)) },
-                actions = { AppOverflowMenu(navigation) },
-            )
+            when {
+                uiState.isSelecting -> SelectionTopBar(uiState.selectedIds.size, actions)
+                uiState.isSearching -> SearchTopBar(uiState.query.orEmpty(), actions)
+                else -> TopAppBar(
+                    title = { Text(stringResource(R.string.app_name)) },
+                    actions = {
+                        if (!uiState.isEmpty) {
+                            IconButton(onClick = actions.onSearch) {
+                                Icon(Icons.Default.Search, contentDescription = stringResource(R.string.library_search))
+                            }
+                        }
+                        AppOverflowMenu(navigation)
+                    },
+                )
+            }
         },
         bottomBar = {
             if (!isLandscape) {
@@ -151,8 +193,7 @@ fun LibraryScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        ImportButton(actions.onImport, enabled = !busy)
-                        ScanButton(actions.onScan, enabled = !busy)
+                        BottomActions(uiState, actions, busy, shareProgress, onDeleteSelected = { deletingSelected = true })
                     }
                 }
             }
@@ -179,8 +220,7 @@ fun LibraryScreen(
                         verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        ImportButton(actions.onImport, enabled = !busy)
-                        ScanButton(actions.onScan, enabled = !busy)
+                        BottomActions(uiState, actions, busy, shareProgress, onDeleteSelected = { deletingSelected = true })
                     }
                 }
             } else {
@@ -203,14 +243,117 @@ fun LibraryScreen(
             onDismiss = { deleting = null },
         )
     }
+    if (deletingSelected && uiState.isSelecting) {
+        val count = uiState.selectedIds.size
+        DeleteDocumentDialog(
+            title = pluralStringResource(R.plurals.library_delete_selected_title, count, count),
+            onConfirm = { actions.onDeleteSelected(); deletingSelected = false },
+            onDismiss = { deletingSelected = false },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SearchTopBar(query: String, actions: LibraryActions) {
+    var text by remember { mutableStateOf(query) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    TopAppBar(
+        navigationIcon = {
+            IconButton(onClick = actions.onCloseSearch) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.library_search_close))
+            }
+        },
+        title = {
+            TextField(
+                value = text,
+                onValueChange = { text = it; actions.onQueryChange(it) },
+                placeholder = { Text(stringResource(R.string.library_search_hint)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                ),
+                modifier = Modifier.fillMaxWidth().focusRequester(focus),
+            )
+        },
+        actions = {
+            if (text.isNotEmpty()) {
+                IconButton(onClick = { text = ""; actions.onQueryChange("") }) {
+                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.library_search_clear))
+                }
+            }
+        },
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SelectionTopBar(count: Int, actions: LibraryActions) {
+    TopAppBar(
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        navigationIcon = {
+            IconButton(onClick = actions.onClearSelection) {
+                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.library_close_selection))
+            }
+        },
+        title = { Text(stringResource(R.string.pages_selected, count)) },
+        actions = {
+            TextButton(onClick = actions.onSelectAll) { Text(stringResource(R.string.select_all)) }
+        },
+    )
+}
+
+/** Import and Scan, or Delete and Share while documents are selected. */
+@Composable
+private fun BottomActions(
+    uiState: LibraryUiState,
+    actions: LibraryActions,
+    busy: Boolean,
+    shareProgress: DocumentShareProgress?,
+    onDeleteSelected: () -> Unit,
+) {
+    if (uiState.isSelecting) {
+        val sharing = shareProgress != null
+        OutlinedButton(onClick = onDeleteSelected, enabled = !sharing) {
+            Icon(Icons.Default.Delete, contentDescription = null)
+            Spacer(Modifier.width(4.dp))
+            Text(stringResource(R.string.delete))
+        }
+        if (shareProgress != null) {
+            // Tapping the button while it works cancels the sharing
+            MainActionButton(
+                onClick = actions.onCancelShare,
+                text = stringResource(R.string.library_share_progress, shareProgress.done, shareProgress.total),
+                icon = Icons.Default.Close,
+            )
+        } else {
+            MainActionButton(
+                onClick = actions.onShareSelected,
+                text = stringResource(R.string.share),
+                icon = Icons.Default.Share,
+            )
+        }
+    } else {
+        ImportButton(actions.onImport, enabled = !busy)
+        ScanButton(actions.onScan, enabled = !busy)
+    }
 }
 
 /** Asks whether to delete a document, which also deletes its original captures. */
 @Composable
-fun DeleteDocumentDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+fun DeleteDocumentDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+    title: String = stringResource(R.string.library_delete_title),
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.library_delete_title)) },
+        title = { Text(title) },
         text = { Text(stringResource(R.string.library_delete_message)) },
         confirmButton = {
             TextButton(onClick = onConfirm) {
@@ -238,6 +381,7 @@ private fun LibraryContent(
     when {
         uiState.isEmpty && uiState.isLoading ->
             Box(modifier, contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        uiState.isEmpty && uiState.isSearching -> NoResults(modifier)
         uiState.isEmpty -> EmptyLibrary(modifier)
         else -> LazyColumn(modifier = modifier.fillMaxSize()) {
             uiState.recent?.let { recent ->
@@ -245,6 +389,7 @@ private fun LibraryContent(
                 item(key = "recent-card") {
                     RecentCard(
                         recent, actions, loadCover, isSharing = sharingId == recent.id,
+                        selecting = uiState.isSelecting, selected = recent.id in uiState.selectedIds,
                         onRename = { onRename(recent) }, onDelete = { onDelete(recent) },
                     )
                 }
@@ -255,7 +400,11 @@ private fun LibraryContent(
             items(uiState.others, key = { it.id }) { item ->
                 DocumentRow(
                     item, loadCover,
+                    selecting = uiState.isSelecting,
+                    selected = item.id in uiState.selectedIds,
                     onOpen = { actions.onOpen(item.id) },
+                    onLongPress = { actions.onStartSelection(item.id) },
+                    onToggle = { actions.onToggleSelection(item.id) },
                     onRename = { onRename(item) },
                     onExport = { actions.onExport(item.id) },
                     onDelete = { onDelete(item) },
@@ -282,12 +431,22 @@ private fun RecentCard(
     actions: LibraryActions,
     loadCover: suspend (String) -> Bitmap?,
     isSharing: Boolean,
+    selecting: Boolean,
+    selected: Boolean,
     onRename: () -> Unit,
     onDelete: () -> Unit,
 ) {
     ElevatedCard(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        onClick = { actions.onOpen(item.id) },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .combinedClickable(
+                onClick = { if (selecting) actions.onToggleSelection(item.id) else actions.onOpen(item.id) },
+                onLongClick = { if (!selecting) actions.onStartSelection(item.id) },
+            ),
+        colors = if (selected) {
+            CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+        } else CardDefaults.elevatedCardColors(),
     ) {
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.Top) {
@@ -303,21 +462,27 @@ private fun RecentCard(
                     Spacer(Modifier.height(4.dp))
                     DocumentInfoText(item)
                 }
-                DocumentMenu(
-                    onRename = onRename,
-                    onExport = { actions.onExport(item.id) },
-                    onDelete = onDelete,
-                )
+                if (selecting) {
+                    SelectionMark(selected)
+                } else {
+                    DocumentMenu(
+                        onRename = onRename,
+                        onExport = { actions.onExport(item.id) },
+                        onDelete = onDelete,
+                    )
+                }
             }
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                QuickAction(Icons.Default.Add, stringResource(R.string.library_add_pages),
-                    onClick = { actions.onAddPages(item.id) }, modifier = Modifier.weight(1f))
-                QuickAction(Icons.Default.Share, stringResource(R.string.share),
-                    onClick = { actions.onShare(item.id) }, modifier = Modifier.weight(1f),
-                    inProgress = isSharing)
-                QuickAction(Icons.Default.Done, stringResource(R.string.export),
-                    onClick = { actions.onExport(item.id) }, modifier = Modifier.weight(1f))
+            if (!selecting) {
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    QuickAction(Icons.Default.Add, stringResource(R.string.library_add_pages),
+                        onClick = { actions.onAddPages(item.id) }, modifier = Modifier.weight(1f))
+                    QuickAction(Icons.Default.Share, stringResource(R.string.share),
+                        onClick = { actions.onShare(item.id) }, modifier = Modifier.weight(1f),
+                        inProgress = isSharing)
+                    QuickAction(Icons.Default.Done, stringResource(R.string.export),
+                        onClick = { actions.onExport(item.id) }, modifier = Modifier.weight(1f))
+                }
             }
         }
     }
@@ -353,18 +518,41 @@ private val PaddingValues8 = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
 private fun DocumentRow(
     item: LibraryItem,
     loadCover: suspend (String) -> Bitmap?,
+    selecting: Boolean,
+    selected: Boolean,
     onOpen: () -> Unit,
+    onLongPress: () -> Unit,
+    onToggle: () -> Unit,
     onRename: () -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit,
 ) {
     ListItem(
-        modifier = Modifier.clickable(onClick = onOpen),
-        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.combinedClickable(
+            onClick = if (selecting) onToggle else onOpen,
+            onLongClick = if (selecting) null else onLongPress,
+        ),
+        colors = ListItemDefaults.colors(
+            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surface,
+        ),
         leadingContent = { DocumentCover(item.id, loadCover, Modifier.width(48.dp).height(64.dp)) },
         headlineContent = { Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = { DocumentInfoText(item) },
-        trailingContent = { DocumentMenu(onRename, onExport, onDelete) },
+        trailingContent = {
+            if (selecting) SelectionMark(selected) else DocumentMenu(onRename, onExport, onDelete)
+        },
+    )
+}
+
+/** The check at the end of a row while selecting: filled when the document is selected. */
+@Composable
+private fun SelectionMark(selected: Boolean) {
+    Icon(
+        imageVector = if (selected) Icons.Default.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+        contentDescription = null,
+        tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(12.dp),
     )
 }
 
@@ -453,6 +641,17 @@ private fun EmptyLibrary(modifier: Modifier) {
         Text(
             stringResource(R.string.library_empty_subtitle),
             style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun NoResults(modifier: Modifier) {
+    Box(modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+        Text(
+            stringResource(R.string.library_no_results),
+            style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
         )
     }
@@ -560,6 +759,26 @@ fun LibraryScreenPreviewSharing() {
     LibraryPreview(
         LibraryUiState(false, LibraryItem("0", "Invoice March", 1_760_400_000_000, 30), sampleItems),
         sharingId = "0")
+}
+
+@Preview(showBackground = true, showSystemUi = true)
+@Preview(showBackground = true, widthDp = 640, heightDp = 320)
+@Composable
+fun LibraryScreenPreviewSelecting() {
+    LibraryPreview(LibraryUiState(false, LibraryItem("0", "Invoice March", 1_760_400_000_000, 30), sampleItems,
+        selectedIds = setOf("0", "2")))
+}
+
+@Preview(showBackground = true)
+@Composable
+fun LibraryScreenPreviewSearching() {
+    LibraryPreview(LibraryUiState(false, null, sampleItems.take(2), query = "re"))
+}
+
+@Preview(showBackground = true)
+@Composable
+fun LibraryScreenPreviewNoResults() {
+    LibraryPreview(LibraryUiState(false, null, emptyList(), query = "zzz"))
 }
 
 @Preview(showBackground = true)

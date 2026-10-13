@@ -177,4 +177,15 @@
     <string name="library_sharing">Preparando…</string>
     <string name="overview_delete_document">Eliminar documento</string>
     <string name="overview_rename_document">Renombrar documento</string>
+    <string name="library_search">Buscar</string>
+    <string name="library_search_hint">Buscar documentos</string>
+    <string name="library_search_clear">Borrar</string>
+    <string name="library_search_close">Cerrar la búsqueda</string>
+    <string name="library_no_results">Ningún documento coincide</string>
+    <string name="library_close_selection">Cerrar la selección</string>
+    <plurals name="library_delete_selected_title">
+        <item quantity="one">¿Eliminar %d documento?</item>
+        <item quantity="other">¿Eliminar %d documentos?</item>
+    </plurals>
+    <string name="library_share_cancel">Cancelar el envío</string>
 </resources>

@@ -111,6 +111,102 @@ class LibraryUiStateTest {
     }
 }
 
+class LibrarySearchTest {
+
+    private fun item(id: String, name: String, updatedAt: Long = 1) = LibraryItem(id, name, updatedAt, 1)
+
+    private val docs = listOf(
+        item("1", "Factura luz", 30), item("2", "Recibo agua", 20), item("3", "factura gas", 10),
+        item("4", "Camión alquiler", 5))
+
+    @Test
+    fun `the documents whose name contains the query are kept, in the same order`() {
+        assertThat(filterDocuments(docs, "fact").map { it.id }).containsExactly("1", "3")
+    }
+
+    @Test
+    fun `capitals do not matter`() {
+        assertThat(filterDocuments(docs, "FACTURA").map { it.id }).containsExactly("1", "3")
+        assertThat(filterDocuments(docs, "recibo").map { it.id }).containsExactly("2")
+    }
+
+    @Test
+    fun `accents do not matter, in the query or in the name`() {
+        assertThat(filterDocuments(docs, "camion").map { it.id }).containsExactly("4")
+        assertThat(filterDocuments(docs, "CAMIÓN").map { it.id }).containsExactly("4")
+        assertThat(filterDocuments(listOf(item("5", "Camion")), "camión").map { it.id }).containsExactly("5")
+    }
+
+    @Test
+    fun `the query is looked for anywhere in the name`() {
+        assertThat(filterDocuments(docs, "agua").map { it.id }).containsExactly("2")
+        assertThat(filterDocuments(docs, "luz").map { it.id }).containsExactly("1")
+    }
+
+    @Test
+    fun `an empty or blank query keeps every document`() {
+        assertThat(filterDocuments(docs, "")).isEqualTo(docs)
+        assertThat(filterDocuments(docs, "   ")).isEqualTo(docs)
+    }
+
+    @Test
+    fun `spaces around the query are ignored`() {
+        assertThat(filterDocuments(docs, "  gas ").map { it.id }).containsExactly("3")
+    }
+
+    @Test
+    fun `a query that matches nothing gives nothing`() {
+        assertThat(filterDocuments(docs, "zzz")).isEmpty()
+    }
+
+    private fun entries() = listOf(entry("a", 10), entry("c", 30), entry("b", 20))
+
+    @Test
+    fun `with a search there is no recent section and the matches come in order`() {
+        val state = libraryUiState(
+            listOf(LibraryEntry(DocumentInfo("x", "Factura luz", 1, 30), 1),
+                LibraryEntry(DocumentInfo("y", "Recibo", 1, 20), 1),
+                LibraryEntry(DocumentInfo("z", "factura gas", 1, 10), 1)),
+            lastOpenedId = "z", query = "fact")
+
+        assertThat(state.recent).isNull() // not apart, even though it was opened last
+        assertThat(state.others.map { it.id }).containsExactly("x", "z")
+        assertThat(state.isSearching).isTrue()
+    }
+
+    @Test
+    fun `without a search the state is the usual one`() {
+        val state = libraryUiState(entries(), lastOpenedId = "a", query = null)
+
+        assertThat(state.isSearching).isFalse()
+        assertThat(state.recent!!.id).isEqualTo("a")
+        assertThat(state.shown.map { it.id }).containsExactly("a", "c", "b")
+    }
+
+    @Test
+    fun `a search that matches nothing is empty but still a search`() {
+        val state = libraryUiState(entries(), lastOpenedId = null, query = "zzz")
+
+        assertThat(state.isEmpty).isTrue()
+        assertThat(state.isSearching).isTrue()
+    }
+
+    @Test
+    fun `selected documents that are not shown are dropped`() {
+        val named = listOf(
+            LibraryEntry(DocumentInfo("x", "Factura luz", 1, 30), 1),
+            LibraryEntry(DocumentInfo("y", "Recibo", 1, 20), 1))
+
+        val all = libraryUiState(named, null, query = null, selectedIds = setOf("x", "y", "gone"))
+        val filtered = libraryUiState(named, null, query = "fact", selectedIds = setOf("x", "y"))
+
+        assertThat(all.selectedIds).containsExactlyInAnyOrder("x", "y") // "gone" does not exist
+        assertThat(filtered.selectedIds).containsExactly("x")
+        assertThat(all.isSelecting).isTrue()
+        assertThat(libraryUiState(named, null).isSelecting).isFalse()
+    }
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class LibraryViewModelTest {
 
@@ -261,5 +357,174 @@ class LibraryViewModelTest {
         assertThat(state.recent).isNull()
         assertThat(state.others.map { it.id }).containsExactly(first)
         assertThat(images.pages()).isEmpty() // the working document went with it
+    }
+
+    // --- Search and selection ---
+
+    private suspend fun listedWith(vararg names: String): List<String> {
+        val ids = mutableListOf<String>()
+        for ((i, name) in names.withIndex()) {
+            if (i > 0) library.startNewDocument()
+            ids += addDocument((i + 1).toByte())
+            library.rename(ids.last(), name)
+        }
+        viewModel.refresh()
+        awaitUntil { !viewModel.uiState.value.isLoading && viewModel.uiState.value.shown.size == names.size }
+        return ids
+    }
+
+    @Test
+    fun `the search filters as the query is typed and closing it shows everything`() = runTest {
+        setUpWith(backgroundScope)
+        listedWith("Factura luz", "Recibo agua", "factura gas")
+
+        viewModel.openSearch()
+        assertThat(viewModel.uiState.value.query).isEqualTo("")
+        assertThat(viewModel.uiState.value.shown).hasSize(3)
+
+        viewModel.onQueryChange("fact")
+        assertThat(viewModel.uiState.value.shown.map { it.name }).containsExactlyInAnyOrder("Factura luz", "factura gas")
+        assertThat(viewModel.uiState.value.recent).isNull()
+
+        viewModel.onQueryChange("zzz")
+        assertThat(viewModel.uiState.value.isEmpty).isTrue()
+
+        viewModel.closeSearch()
+        assertThat(viewModel.uiState.value.query).isNull()
+        assertThat(viewModel.uiState.value.shown).hasSize(3)
+    }
+
+    @Test
+    fun `typing without an open search does nothing`() = runTest {
+        setUpWith(backgroundScope)
+        listedWith("A", "B")
+
+        viewModel.onQueryChange("a")
+
+        assertThat(viewModel.uiState.value.query).isNull()
+        assertThat(viewModel.uiState.value.shown).hasSize(2)
+    }
+
+    @Test
+    fun `a long press starts the selection and a tap toggles the others`() = runTest {
+        setUpWith(backgroundScope)
+        val ids = listedWith("A", "B", "C")
+
+        viewModel.toggleSelection(ids[0]) // a tap outside selection mode selects nothing
+        assertThat(viewModel.uiState.value.isSelecting).isFalse()
+
+        viewModel.startSelection(ids[1])
+        assertThat(viewModel.uiState.value.selectedIds).containsExactly(ids[1])
+        assertThat(viewModel.uiState.value.isSelecting).isTrue()
+
+        viewModel.toggleSelection(ids[2])
+        assertThat(viewModel.uiState.value.selectedIds).containsExactlyInAnyOrder(ids[1], ids[2])
+
+        viewModel.startSelection(ids[0]) // a long press while selecting does not change it
+        assertThat(viewModel.uiState.value.selectedIds).containsExactlyInAnyOrder(ids[1], ids[2])
+    }
+
+    @Test
+    fun `selection mode ends when the last document is unselected`() = runTest {
+        setUpWith(backgroundScope)
+        val ids = listedWith("A", "B")
+        viewModel.startSelection(ids[0])
+        viewModel.toggleSelection(ids[1])
+
+        viewModel.toggleSelection(ids[0])
+        assertThat(viewModel.uiState.value.isSelecting).isTrue()
+        viewModel.toggleSelection(ids[1])
+
+        assertThat(viewModel.uiState.value.isSelecting).isFalse()
+        assertThat(viewModel.uiState.value.selectedIds).isEmpty()
+    }
+
+    @Test
+    fun `select all selects what is shown and clearing ends the selection`() = runTest {
+        setUpWith(backgroundScope)
+        val ids = listedWith("A", "B", "C")
+        viewModel.startSelection(ids[0])
+
+        viewModel.selectAll()
+        assertThat(viewModel.uiState.value.selectedIds).containsExactlyInAnyOrder(*ids.toTypedArray())
+
+        viewModel.clearSelection()
+        assertThat(viewModel.uiState.value.isSelecting).isFalse()
+        assertThat(viewModel.uiState.value.shown).hasSize(3) // nothing is deleted
+    }
+
+    @Test
+    fun `select all respects the search`() = runTest {
+        setUpWith(backgroundScope)
+        val ids = listedWith("Factura luz", "Recibo agua", "factura gas")
+        viewModel.openSearch()
+        viewModel.onQueryChange("fact")
+        viewModel.startSelection(ids[0])
+
+        viewModel.selectAll()
+
+        assertThat(viewModel.uiState.value.selectedIds).containsExactlyInAnyOrder(ids[0], ids[2])
+    }
+
+    @Test
+    fun `selected documents hidden by a new query are unselected`() = runTest {
+        setUpWith(backgroundScope)
+        val ids = listedWith("Factura luz", "Recibo agua")
+        viewModel.startSelection(ids[0])
+        viewModel.toggleSelection(ids[1])
+
+        viewModel.openSearch()
+        viewModel.onQueryChange("recibo")
+
+        assertThat(viewModel.uiState.value.selectedIds).containsExactly(ids[1])
+    }
+
+    @Test
+    fun `closing the search keeps the selection and entering selection keeps the search`() = runTest {
+        setUpWith(backgroundScope)
+        val ids = listedWith("Factura luz", "Recibo agua")
+        viewModel.openSearch()
+        viewModel.onQueryChange("factura")
+        viewModel.startSelection(ids[0])
+        assertThat(viewModel.uiState.value.query).isEqualTo("factura")
+
+        viewModel.clearSelection()
+        assertThat(viewModel.uiState.value.query).isEqualTo("factura") // the search stays open
+
+        viewModel.startSelection(ids[0])
+        viewModel.closeSearch()
+        assertThat(viewModel.uiState.value.selectedIds).containsExactly(ids[0])
+    }
+
+    @Test
+    fun `deleting the selected documents removes them all and ends the selection`() = runTest {
+        setUpWith(backgroundScope)
+        val ids = listedWith("A", "B", "C")
+        viewModel.startSelection(ids[0])
+        viewModel.toggleSelection(ids[2])
+
+        viewModel.deleteSelected()
+        awaitUntil { viewModel.uiState.value.shown.size == 1 }
+
+        assertThat(deleted).containsExactlyInAnyOrder(ids[0], ids[2])
+        assertThat(store.readMetadata(ids[0])).isNull()
+        assertThat(store.readMetadata(ids[2])).isNull()
+        assertThat(store.readMetadata(ids[1])).isNotNull()
+        assertThat(viewModel.uiState.value.isSelecting).isFalse()
+        assertThat(viewModel.uiState.value.shown.map { it.id }).containsExactly(ids[1])
+    }
+
+    @Test
+    fun `deleting the selection that includes the open document clears the working copy`() = runTest {
+        setUpWith(backgroundScope)
+        val ids = listedWith("A", "B") // B is the document being edited
+        assertThat(images.documentInfo().id).isEqualTo(ids[1])
+        viewModel.startSelection(ids[1])
+
+        viewModel.deleteSelected()
+        awaitUntil { viewModel.uiState.value.shown.size == 1 }
+
+        assertThat(images.pages()).isEmpty()
+        assertThat(store.readMetadata(ids[1])).isNull()
     }
 }

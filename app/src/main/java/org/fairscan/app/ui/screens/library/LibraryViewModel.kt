@@ -16,6 +16,8 @@ package org.fairscan.app.ui.screens.library
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import java.text.Normalizer
+import java.util.Locale
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
@@ -46,20 +48,59 @@ data class LibraryUiState(
     val recent: LibraryItem? = null,
     /** The other documents, most recently modified first. */
     val others: List<LibraryItem> = emptyList(),
+    /** What is typed in the search, or null when the search is closed. */
+    val query: String? = null,
+    /** The documents selected (all of them are shown). Selection mode lasts while there are any. */
+    val selectedIds: Set<String> = emptySet(),
 ) {
     val isEmpty get() = recent == null && others.isEmpty()
+    val isSearching get() = query != null
+    val isSelecting get() = selectedIds.isNotEmpty()
+
+    /** Every document shown, in the order they are shown. */
+    val shown: List<LibraryItem> get() = listOfNotNull(recent) + others
+}
+
+/** [text] without accents or capitals, so that "Camión" and "camion" are the same word. */
+internal fun normalizeForSearch(text: String): String =
+    Normalizer.normalize(text, Normalizer.Form.NFD)
+        .replace(Regex("\\p{M}+"), "")
+        .lowercase(Locale.ROOT)
+
+/** The [items] whose name contains [query], ignoring case and accents, in the same order. */
+fun filterDocuments(items: List<LibraryItem>, query: String): List<LibraryItem> {
+    val wanted = normalizeForSearch(query.trim())
+    if (wanted.isEmpty()) return items
+    return items.filter { normalizeForSearch(it.name).contains(wanted) }
 }
 
 /**
  * The state of the library screen for [entries] (the documents with pages, most recently modified
- * first): the one opened last comes apart, once, and the rest follow in order.
+ * first). Without a search the document opened last comes apart, once, and the rest follow in order.
+ * While a query is typed there is no recent section: the documents that match are listed in order.
+ * [selectedIds] are kept only as far as those documents are shown.
  */
-fun libraryUiState(entries: List<LibraryEntry>, lastOpenedId: String?): LibraryUiState {
+fun libraryUiState(
+    entries: List<LibraryEntry>,
+    lastOpenedId: String?,
+    query: String? = null,
+    selectedIds: Set<String> = emptySet(),
+): LibraryUiState {
     val items = entries
         .map { LibraryItem(it.info.id, it.info.name, it.info.updatedAt, it.pageCount) }
         .sortedByDescending { it.updatedAt }
-    val recent = items.firstOrNull { it.id == lastOpenedId }
-    return LibraryUiState(isLoading = false, recent = recent, others = items.filter { it !== recent })
+    val (recent, others) = if (query != null) {
+        null to filterDocuments(items, query)
+    } else {
+        val recent = items.firstOrNull { it.id == lastOpenedId }
+        recent to items.filter { it !== recent }
+    }
+    val shown = listOfNotNull(recent) + others
+    val visible = shown.map { it.id }.toSet()
+    return LibraryUiState(
+        isLoading = false, recent = recent, others = others,
+        query = query, selectedIds = selectedIds.filterTo(LinkedHashSet()) { it in visible },
+    )
 }
 
 class LibraryViewModel(
@@ -74,22 +115,92 @@ class LibraryViewModel(
     private val _state = MutableStateFlow(LibraryUiState())
     val uiState: StateFlow<LibraryUiState> = _state.asStateFlow()
 
+    // What the state is made of
+    private var entries: List<LibraryEntry>? = null
+    private var lastOpenedId: String? = null
+    private var query: String? = null
+    private var selectedIds: Set<String> = emptySet()
+
+    private fun publish() {
+        val known = entries ?: return
+        _state.value = libraryUiState(known, lastOpenedId, query, selectedIds)
+        // Selected documents that are not shown any more (deleted, or hidden by the search) are dropped
+        selectedIds = _state.value.selectedIds
+    }
+
     /** Lists the documents: the last list is shown at once, then the real one replaces it. */
     fun refresh() {
         viewModelScope.launch {
             try {
                 if (_state.value.isLoading) {
                     val cached = library.cachedDocuments()
-                    if (cached.isNotEmpty()) _state.value = libraryUiState(cached, library.lastOpenedId())
+                    if (cached.isNotEmpty()) {
+                        entries = cached
+                        lastOpenedId = library.lastOpenedId()
+                        publish()
+                    }
                 }
-                _state.value = libraryUiState(library.documents(), library.lastOpenedId())
+                entries = library.documents()
+                lastOpenedId = library.lastOpenedId()
+                publish()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 logger.e("Library", "Failed to list the documents", e)
-                _state.update { it.copy(isLoading = false) }
+                if (entries == null) entries = emptyList()
+                publish()
             }
         }
+    }
+
+    // --- Search ---
+
+    /** Opens the search (with an empty query, which shows every document). */
+    fun openSearch() {
+        if (query != null) return
+        query = ""
+        publish()
+    }
+
+    fun onQueryChange(text: String) {
+        if (query == null) return
+        query = text
+        publish()
+    }
+
+    /** Closes the search: the query is forgotten and every document is shown. */
+    fun closeSearch() {
+        if (query == null) return
+        query = null
+        publish()
+    }
+
+    // --- Selection ---
+
+    /** A long press on a document: selection mode starts with it, and goes on if it already did. */
+    fun startSelection(id: String) {
+        if (selectedIds.isNotEmpty()) return
+        selectedIds = setOf(id)
+        publish()
+    }
+
+    /** A tap in selection mode selects the document, or unselects it; the last one ends the mode. */
+    fun toggleSelection(id: String) {
+        if (selectedIds.isEmpty()) return
+        selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
+        publish()
+    }
+
+    /** Selects every document shown, so with a search only those that match. */
+    fun selectAll() {
+        selectedIds = _state.value.shown.map { it.id }.toSet()
+        publish()
+    }
+
+    fun clearSelection() {
+        if (selectedIds.isEmpty()) return
+        selectedIds = emptySet()
+        publish()
     }
 
     /** Renames a document. A blank name is not accepted. Returns whether it was. */
@@ -109,14 +220,25 @@ class LibraryViewModel(
         return true
     }
 
-    fun delete(id: String) {
+    fun delete(id: String) = deleteAll(listOf(id))
+
+    /** Deletes the selected documents, and ends the selection mode. */
+    fun deleteSelected() {
+        val ids = selectedIds.toList()
+        selectedIds = emptySet()
+        deleteAll(ids)
+    }
+
+    private fun deleteAll(ids: List<String>) {
         viewModelScope.launch {
-            try {
-                deleteDocument(id)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                logger.e("Library", "Failed to delete $id", e)
+            for (id in ids) {
+                try {
+                    deleteDocument(id)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logger.e("Library", "Failed to delete $id", e)
+                }
             }
             refresh()
         }

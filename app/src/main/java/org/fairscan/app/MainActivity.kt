@@ -226,6 +226,7 @@ class MainActivity : ComponentActivity() {
                         val libraryState by library.uiState.collectAsStateWithLifecycle()
                         val isOpening by viewModel.isOpeningDocument.collectAsStateWithLifecycle()
                         val isQuickSharing by exportViewModel.isQuickSharing.collectAsStateWithLifecycle()
+                        val documentShare by exportViewModel.documentShare.collectAsStateWithLifecycle()
                         var sharingId by remember { mutableStateOf<String?>(null) }
                         LaunchedEffect(isQuickSharing) { if (!isQuickSharing) sharingId = null }
                         LaunchedEffect(Unit) { library.refresh() }
@@ -256,10 +257,26 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onRename = library::rename,
                                 onDelete = library::delete,
+                                onSearch = library::openSearch,
+                                onQueryChange = library::onQueryChange,
+                                onCloseSearch = library::closeSearch,
+                                onStartSelection = library::startSelection,
+                                onToggleSelection = library::toggleSelection,
+                                onSelectAll = library::selectAll,
+                                onClearSelection = library::clearSelection,
+                                onShareSelected = {
+                                    exportViewModel.shareDocuments(
+                                        libraryState.selectedIds.toList(),
+                                        beforeExport = { sessionViewModel.libraryRepository?.flush() },
+                                    )
+                                },
+                                onCancelShare = exportViewModel::cancelDocumentShare,
+                                onDeleteSelected = library::deleteSelected,
                             ),
                             loadCover = library::loadCover,
                             busy = isOpening,
                             sharingId = sharingId,
+                            shareProgress = documentShare,
                         )
                     }
                     is Screen.Main.Overview -> {

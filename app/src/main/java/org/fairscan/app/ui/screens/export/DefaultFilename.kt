@@ -15,11 +15,9 @@
 package org.fairscan.app.ui.screens.export
 
 import org.fairscan.app.data.DocumentInfo
+import org.fairscan.app.data.sanitizeFileName
 import org.fairscan.app.ui.screens.settings.DefaultFilenameStyle
 import java.util.Date
-
-// Characters that cannot be in a file name on common file systems
-private val INVALID_FILENAME_CHARS = Regex("""[\\/:*?"<>|\u0000-\u001f]""")
 
 /**
  * Base of the default file name of an export (before the page suffix): the name of the document when
@@ -32,7 +30,7 @@ fun defaultExportBaseName(
     style: DefaultFilenameStyle,
     now: Date = Date(),
 ): String {
-    val name = document?.name?.replace(INVALID_FILENAME_CHARS, "_")?.trim()
+    val name = document?.name?.let(::sanitizeFileName)
     if (document == null || name.isNullOrEmpty()) return style.filename(now)
     val generated = DefaultFilenameStyle.entries.map { it.filename(Date(document.createdAt)) }
     return if (document.name in generated) style.filename(now) else name

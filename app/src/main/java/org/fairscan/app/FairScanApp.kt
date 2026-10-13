@@ -30,12 +30,14 @@ import org.fairscan.app.data.FileManager
 import org.fairscan.app.data.LogRepository
 import org.fairscan.app.data.OcrLanguageRepository
 import org.fairscan.app.data.library.AndroidLibraryPlatform
+import org.fairscan.app.data.library.LibraryExporter
 import org.fairscan.app.data.library.LibraryIndex
 import org.fairscan.app.data.library.LibraryLocations
 import org.fairscan.app.domain.ImageSegmentationService
 import org.fairscan.app.domain.OcrService
 import org.fairscan.app.platform.AndroidImageLoader
 import org.fairscan.app.platform.AndroidPdfWriter
+import org.fairscan.app.platform.ImageProcessor
 import org.fairscan.app.ui.screens.camera.CameraViewModel
 import org.fairscan.app.ui.screens.settings.SettingsRepository
 import org.fairscan.app.ui.screens.settings.SettingsViewModel
@@ -85,6 +87,14 @@ class AppContainer(context: Context) {
         legacyDirs = listOf(File(context.filesDir, "library")),
     )
     val libraryIndex = LibraryIndex(File(context.filesDir, "library-index.json"))
+    /** Makes the files to share of documents of the library, without opening them. */
+    val libraryExporter = LibraryExporter(
+        workDir = File(context.cacheDir, "library-export"),
+        // Only used to render pages again, which does not depend on the thumbnail size
+        transformations = ImageProcessor(THUMBNAIL_SIZE_DP),
+        fileManager = fileManager,
+        logger = logger,
+    )
 
     init {
         scope.launch { imageSegmentationService.initialize() }

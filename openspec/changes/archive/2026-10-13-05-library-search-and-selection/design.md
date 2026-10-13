@@ -67,7 +67,7 @@ again cancels.
 - **Selection** in `LibraryUiState.selectedIds: Set<String>`, pruned when the list changes
   (deleted or filtered-out documents stay selected only if visible; Select all selects visible
   ones). Same gesture semantics as `export-page-selection`: still long press selects, tap toggles,
-  last unselect ends the mode. `BackHandler` closes search first, then selection.
+  last unselect ends the mode. `BackHandler` closes the selection first (keeping the search open), then the search.
 - **Exporting a non-working document**: `LibraryExport.export(id, format, quality)` copies the
   entry into a temporary directory under `cacheDir`, builds a throw-away `ImageRepository` on it
   (as the external scan-to-PDF mode does), runs the existing `pagesToExport`/`generatePdf` or JPEG

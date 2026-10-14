@@ -605,6 +605,7 @@ class ImageRepositoryTest {
             now = 2_000L
             repo.rotate(repo.imageIds()[0], clockwise = true)
             now = 3_000L
+            Thread.sleep(2) // page ids are the time in milliseconds: they must differ
             repo.add(jpeg(3), jpeg(4), metadata1, COLOR)
             repo.movePage(repo.imageIds()[1], 0)
 

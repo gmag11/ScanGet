@@ -1,7 +1,6 @@
 <resources>
     <string name="about">Tentang</string>
     <string name="add_page">Tambahkan halaman</string>
-    <string name="app_tagline">Aplikasi sederhana dan aman untuk memindai dokumen Anda</string>
     <string name="apply">Terapkan</string>
     <string name="back">Kembali</string>
     <string name="black_and_white_jpeg_hint">Halaman hitam-putih akan berukuran lebih kecil dan lebih tajam jika diekspor sebagai PDF.</string>

@@ -52,7 +52,7 @@ class AboutViewModel(container: AppContainer, val imageRepository: ImageReposito
 
     private fun buildFullLogs(): String {
         val header = buildString {
-            appendLine("FairScan diagnostics report")
+            appendLine("ScanGet diagnostics report")
             appendLine("App version: ${BuildConfig.VERSION_NAME}")
             appendLine("Android version: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
             appendLine("Generated: ${LocalDateTime.now()}")

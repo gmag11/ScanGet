@@ -14,45 +14,15 @@
  */
 package org.fairscan.app.data.library
 
-import android.Manifest
 import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
-import android.os.Environment
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
-import java.io.File
-
-const val DEFAULT_LIBRARY_FOLDER_NAME = "FairScan"
 
 class AndroidLibraryPlatform(private val context: Context) : LibraryPlatform {
 
     private val resolver: ContentResolver get() = context.contentResolver
-
-    override fun hasAllFilesAccess(): Boolean =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            Environment.isExternalStorageManager()
-        } else {
-            context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
-                PackageManager.PERMISSION_GRANTED
-        }
-
-    override fun isFolderUsable(path: String): Boolean =
-        File(path).let { it.isDirectory && it.canWrite() }
-
-    override fun defaultFolderPath(): String =
-        File(Environment.getExternalStorageDirectory(), DEFAULT_LIBRARY_FOLDER_NAME).path
-
-    override fun existingDirectStore(path: String): LibraryStore? =
-        File(path).takeIf { it.isDirectory }?.let { FileLibraryStore(it) }
-
-    override fun directStore(path: String): LibraryStore {
-        val dir = File(path)
-        check(dir.isDirectory || dir.mkdirs()) { "Cannot create $path" }
-        return FileLibraryStore(dir)
-    }
 
     override fun hasSafPermission(uri: String): Boolean =
         resolver.persistedUriPermissions.any {

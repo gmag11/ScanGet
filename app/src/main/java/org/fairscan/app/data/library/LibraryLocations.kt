@@ -77,14 +77,6 @@ class LibraryLocations(
     /** Identifies the location in use, or null if there is none. */
     fun currentKey(): String? = (_status.value as? LibraryStatus.Ready)?.location?.key
 
-    /** The folder proposed by default: `FairScan` at the root of the user's storage. */
-    fun defaultLocation() = LibraryLocation.Direct(platform.defaultFolderPath())
-
-    fun hasAllFilesAccess() = platform.hasAllFilesAccess()
-
-    /** The folder proposed by default exists (it can then be picked without creating it). */
-    fun defaultFolderExists() = platform.existingDirectStore(platform.defaultFolderPath()) != null
-
     /** [location] with the name of its folder, which a folder granted by the picker does not have yet. */
     fun named(location: LibraryLocation): LibraryLocation =
         if (location is LibraryLocation.Saf && location.name == null) {
@@ -92,13 +84,10 @@ class LibraryLocations(
         } else location
 
     /** What the folder [candidate] holds. Reads only: nothing is created or written. */
-    fun inspect(candidate: LibraryLocation): FolderInspection {
-        val store = when (candidate) {
-            is LibraryLocation.Direct -> platform.existingDirectStore(candidate.path)
+    fun inspect(candidate: LibraryLocation): FolderInspection =
+        when (candidate) {
             is LibraryLocation.Saf -> platform.safStore(candidate.uri)
-        }
-        return store?.inspect() ?: FolderInspection(0, 0)
-    }
+        }.inspect()
 
     /** Gives up a folder that was not used after all. */
     fun discard(candidate: LibraryLocation) {
@@ -119,12 +108,12 @@ class LibraryLocations(
         onProgress: (MoveProgress) -> Unit = {},
     ): LocationChange {
         val named = named(location)
-        val newStore = openStore(named, create = true)!!
+        val newStore = openStore(named)
         val previous = _status.value.locationOrNull()
         var notMoved = 0
         if (move && previous != null && previous.key != named.key) {
-            val oldStore = synchronized(this) { store } ?: openStore(previous, create = false)
-            if (oldStore != null) notMoved += mover.move(oldStore, newStore, onProgress).let { it.failed + it.keptInSource }
+            val oldStore = synchronized(this) { store } ?: openStore(previous)
+            notMoved += mover.move(oldStore, newStore, onProgress).let { it.failed + it.keptInSource }
         }
         for (dir in legacyDirs.filter { it.isDirectory }) {
             val result = mover.move(FileLibraryStore(dir), newStore)
@@ -147,7 +136,7 @@ class LibraryLocations(
         val available = isAvailable(location, deep)
         synchronized(this) {
             if (available) {
-                if (_status.value !is LibraryStatus.Ready || store == null) store = openStore(location, create = false)
+                if (_status.value !is LibraryStatus.Ready || store == null) store = openStore(location)
                 _status.value = LibraryStatus.Ready(location)
             } else {
                 store = null
@@ -159,15 +148,11 @@ class LibraryLocations(
     // [deep] also asks the system whether a folder granted by the picker can be reached, which is
     // slower than checking that the permission is still held
     private fun isAvailable(location: LibraryLocation, deep: Boolean): Boolean = when (location) {
-        is LibraryLocation.Direct ->
-            platform.hasAllFilesAccess() && platform.isFolderUsable(location.path)
         is LibraryLocation.Saf ->
             platform.hasSafPermission(location.uri) && (!deep || platform.isSafFolderReachable(location.uri))
     }
 
-    private fun openStore(location: LibraryLocation, create: Boolean): LibraryStore? = when (location) {
-        is LibraryLocation.Direct ->
-            if (create) platform.directStore(location.path) else platform.existingDirectStore(location.path)
+    private fun openStore(location: LibraryLocation): LibraryStore = when (location) {
         is LibraryLocation.Saf -> platform.safStore(location.uri)
     }
 

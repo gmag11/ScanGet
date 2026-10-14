@@ -64,9 +64,20 @@ private fun encode(mat: Mat, params: MatOfInt, encoding: ImageEncoding): ByteArr
     return result
 }
 
-fun decodeJpegOrPng(bytes: ByteArray): Mat {
+/**
+ * Decodes a JPEG or PNG. With [reduction] 2, 4 or 8 a JPEG is decoded 2, 4 or 8 times smaller in each
+ * direction straight from its coefficients, which is much faster than decoding it in full (a PNG
+ * is decoded in full and then reduced).
+ */
+fun decodeJpegOrPng(bytes: ByteArray, reduction: Int = 1): Mat {
     val src = MatOfByte(*bytes)
-    val decoded = Imgcodecs.imdecode(src, Imgcodecs.IMREAD_COLOR)
+    val flags = when (reduction) {
+        2 -> Imgcodecs.IMREAD_REDUCED_COLOR_2
+        4 -> Imgcodecs.IMREAD_REDUCED_COLOR_4
+        8 -> Imgcodecs.IMREAD_REDUCED_COLOR_8
+        else -> Imgcodecs.IMREAD_COLOR
+    }
+    val decoded = Imgcodecs.imdecode(src, flags)
     src.release()
     if (decoded.empty()) {
         decoded.release()

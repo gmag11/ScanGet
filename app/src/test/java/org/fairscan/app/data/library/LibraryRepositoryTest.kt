@@ -15,6 +15,7 @@
 package org.fairscan.app.data.library
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -28,6 +29,8 @@ import org.assertj.core.api.Assertions.assertThat
 import org.fairscan.app.data.DocumentMetadataV3
 import org.fairscan.app.data.ImageRepository
 import org.fairscan.app.data.ImageTransformations
+import org.fairscan.app.data.ThumbnailCache
+import org.fairscan.app.data.ThumbnailKind
 import org.fairscan.app.data.Logger
 import org.fairscan.app.data.PageRecognition
 import org.fairscan.app.data.PageV2
@@ -64,19 +67,33 @@ class LibraryRepositoryTest {
     private val libraryDir by lazy { folder.newFolder("library") }
     private val store by lazy { FileLibraryStore(libraryDir) }
     private var clockValue = 1_000L
+    private val thumbnails by lazy { ThumbnailCache(File(folder.root, "thumbnails"), 240, 480) }
 
     private val quad = Quad(Point(.01, .02), Point(.1, .03), Point(.11, .12), Point(.03, .09))
     private val metadata = PageMetadata(
         quad, R90, COLOR, ImageSize(1600, 1200), OpticalMeasures(CameraIntrinsics(42f, 43f), 44f))
 
     // The "processed image" encodes what it was made from, to check the same rendering comes back
+    private var processCalls = 0
+    private var processGate: java.util.concurrent.CountDownLatch? = null
+    private var rotationMarksImages = false // a rotated image gets an extra byte, to see how often it is rotated
+
     private val transformations = object : ImageTransformations {
-        override fun rotate(input: EncodedImage, rotationDegrees: Int): EncodedImage = input
-        override fun resizeToThumbnail(input: EncodedImage): Jpeg = Jpeg(byteArrayOf(input.bytes[0]))
+        override fun rotate(input: EncodedImage, rotationDegrees: Int): EncodedImage =
+            if (rotationMarksImages) Jpeg(input.bytes + 99) else input
+        // Looks like a JPEG (FFD8 ... FFD9) to the thumbnail cache; the third byte tells where it comes from
+        override fun resizeToThumbnail(input: EncodedImage): Jpeg = Jpeg(ByteArray(20).also {
+            it[0] = 0xFF.toByte(); it[1] = 0xD8.toByte(); it[2] = input.bytes[0]
+            it[18] = 0xFF.toByte(); it[19] = 0xD9.toByte()
+        })
         override fun process(
             source: Jpeg, metadata: PageMetadata, colorMode: ColorMode, adjustments: Adjustments,
-        ): Jpeg = Jpeg(byteArrayOf(source.bytes[0], colorMode.ordinal.toByte(),
-            adjustments.brightness.toByte(), (metadata.normalizedQuad.topLeft.x * 100).toInt().toByte()))
+        ): Jpeg {
+            processCalls++
+            processGate?.await() // a test can keep the rendering waiting
+            return Jpeg(byteArrayOf(source.bytes[0], colorMode.ordinal.toByte(),
+                adjustments.brightness.toByte(), (metadata.normalizedQuad.topLeft.x * 100).toInt().toByte()))
+        }
     }
 
     private class Session(val images: ImageRepository, val library: LibraryRepository, val dir: File)
@@ -94,7 +111,7 @@ class LibraryRepositoryTest {
         currentStore = store
         val dir = folder.newFolder(name)
         val images = ImageRepository(dir, transformations, backgroundScope, Logger { _, _, _ -> },
-            documentNamer = { "Scan $it" }, clock = { clockValue })
+            documentNamer = { "Scan $it" }, clock = { clockValue }, thumbnailDiskCache = thumbnails)
         val library = LibraryRepository({ currentStore }, images, backgroundScope, Logger { _, _, _ -> },
             debounceMillis = debounce, clock = { clockValue },
             ioDispatcher = StandardTestDispatcher(testScheduler), lastOpened = lastOpened, ocr = ocr)
@@ -897,5 +914,144 @@ class LibraryRepositoryTest {
         assertThat(store.processedPages(id).getValue(pages[2].id).fileName).isEqualTo("$name-page01.jpg")
         assertThat(store.processedPages(id).getValue(pages[1].id).fileName).isEqualTo("$name-page02.jpg")
         assertThat(processedFiles(id)).hasSize(2)
+    }
+
+    // --- Pages shown from the processed images of the library ---
+
+    @Test
+    fun `a page of an opened document is shown from the stored processed image without rendering it`() = runTest {
+        val s = session("work")
+        s.addPage(1)
+        s.library.flush()
+        val id = store.list().single().info.id
+        val key = s.images.pages().single().key()
+        val stored = store.readProcessed(id, key.pageId)!!
+        s.library.startNewDocument()
+        processCalls = 0
+
+        assertThat(s.library.open(id)).isTrue()
+        val image = s.images.image(s.images.pages().single().key())!!
+
+        assertThat(image.bytes).isEqualTo(stored)
+        assertThat(processCalls).isEqualTo(0)
+    }
+
+    @Test
+    fun `a rotated page is not rotated again when it comes from the stored image`() = runTest {
+        rotationMarksImages = true
+        val s = session("work")
+        s.addPage(1)
+        s.images.rotate(s.images.pages().single().id, clockwise = true)
+        s.library.flush()
+        val id = store.list().single().info.id
+        val rotatedOnce = s.images.image(s.images.pages().single().key())!!.bytes
+        s.library.startNewDocument()
+        processCalls = 0
+
+        s.library.open(id)
+        val image = s.images.image(s.images.pages().single().key())!!
+
+        assertThat(image.bytes).isEqualTo(rotatedOnce)
+        assertThat(processCalls).isEqualTo(0)
+    }
+
+    @Test
+    fun `a page without a stored image is rendered from its original capture`() = runTest {
+        val s = session("work")
+        s.addPage(1)
+        s.library.flush()
+        val id = store.list().single().info.id
+        val pageId = s.images.pages().single().id
+        s.library.startNewDocument()
+        store.deleteProcessed(id, pageId)
+        processCalls = 0
+
+        s.library.open(id)
+        s.images.image(s.images.pages().single().key())
+
+        // The library stores it again when the document is opened, rendering it once
+        assertThat(processCalls).isEqualTo(1)
+    }
+
+    @Test
+    fun `a page edited after opening is rendered again and not taken from the stored image`() = runTest {
+        val s = session("work")
+        s.addPage(1)
+        s.library.flush()
+        val id = store.list().single().info.id
+        s.library.startNewDocument()
+        s.library.open(id)
+        val page = s.images.pages().single()
+        processCalls = 0
+
+        s.images.setRendering(page.id, GRAYSCALE, Adjustments.NEUTRAL)
+        val edited = s.images.image(s.images.pages().single().key())!!
+
+        assertThat(processCalls).isEqualTo(1)
+        assertThat(edited.bytes[1]).isEqualTo(GRAYSCALE.ordinal.toByte())
+    }
+
+    @Test
+    fun `the thumbnails of a page are kept when it is saved to the library`() = runTest {
+        val s = session("work")
+        s.addPage(1)
+
+        s.library.flush()
+
+        val key = s.images.pages().single().key()
+        assertThat(thumbnails.read(key.pageId, key.renderKey(), ThumbnailKind.GRID)).isNotNull()
+        assertThat(thumbnails.read(key.pageId, key.renderKey(), ThumbnailKind.STRIP)).isNotNull()
+    }
+
+    @Test
+    fun `opening a document does not wait for its pages to be rendered, they are kept in the background`() = runTest {
+        val s = session("work")
+        s.addPage(1); s.addPage(2)
+        s.library.flush()
+        val id = store.list().single().info.id
+        val pageIds = s.images.pages().map { it.id }
+        s.library.startNewDocument()
+        pageIds.forEach { store.deleteProcessed(id, it) }
+        processCalls = 0
+        val gate = java.util.concurrent.CountDownLatch(1)
+        processGate = gate
+
+        // The rendering is held: open() returns anyway, with nothing stored yet
+        assertThat(s.library.open(id)).isTrue()
+        assertThat(store.processedPages(id)).isEmpty()
+
+        gate.countDown()
+        s.library.awaitBackgroundWork()
+
+        assertThat(store.processedPages(id)).containsOnlyKeys(pageIds)
+        assertThat(processCalls).isEqualTo(2)
+    }
+
+    @Test
+    fun `a page edited while it was rendered in the background does not keep the old rendering`() = runTest {
+        val s = session("work")
+        s.addPage(1)
+        s.library.flush()
+        val id = store.list().single().info.id
+        val page = s.images.pages().single()
+        s.library.startNewDocument()
+        store.deleteProcessed(id, page.id)
+        val gate = java.util.concurrent.CountDownLatch(1)
+        processGate = gate
+        s.library.open(id)
+
+        // The user changes the filter while the old rendering is still being made
+        val edit = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+            s.images.setRendering(page.id, GRAYSCALE, Adjustments.NEUTRAL)
+        }
+        gate.countDown()
+        edit.join()
+        s.library.awaitBackgroundWork()
+
+        // Whatever was kept is for the rendering the page has now
+        val current = s.images.pages().single().key().renderKey()
+        store.processedPages(id)[page.id]?.let { assertThat(it.renderKey).isEqualTo(current) }
+        s.library.flush()
+        assertThat(store.processedPages(id).getValue(page.id).renderKey).isEqualTo(current)
     }
 }

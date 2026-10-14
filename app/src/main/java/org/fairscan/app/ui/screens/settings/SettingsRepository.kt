@@ -141,12 +141,10 @@ class SettingsRepository(
     /** The library location chosen by the user, or null if there is none yet. */
     override suspend fun load(): StoredLibraryLocation? =
         dataStore.data.first().let { prefs ->
-            val kind = when (prefs[LIBRARY_LOCATION_KIND]) {
-                "DIRECT" -> StoredLibraryLocation.Kind.DIRECT
-                "SAF" -> StoredLibraryLocation.Kind.SAF
-                else -> return@let null
-            }
-            prefs[LIBRARY_LOCATION]?.let { StoredLibraryLocation(kind, it, prefs[LIBRARY_LOCATION_NAME]) }
+            // A library saved as a path by an earlier build ("DIRECT") cannot be reached any more: it
+            // counts as not chosen, and picking the same folder again brings its documents back
+            if (prefs[LIBRARY_LOCATION_KIND] != "SAF") return@let null
+            prefs[LIBRARY_LOCATION]?.let { StoredLibraryLocation(it, prefs[LIBRARY_LOCATION_NAME]) }
         }
 
     override suspend fun save(location: StoredLibraryLocation?) {
@@ -156,8 +154,8 @@ class SettingsRepository(
                 prefs.remove(LIBRARY_LOCATION)
                 prefs.remove(LIBRARY_LOCATION_NAME)
             } else {
-                prefs[LIBRARY_LOCATION_KIND] = location.kind.name
-                prefs[LIBRARY_LOCATION] = location.value
+                prefs[LIBRARY_LOCATION_KIND] = "SAF"
+                prefs[LIBRARY_LOCATION] = location.uri
                 if (location.name != null) prefs[LIBRARY_LOCATION_NAME] = location.name
                 else prefs.remove(LIBRARY_LOCATION_NAME)
             }

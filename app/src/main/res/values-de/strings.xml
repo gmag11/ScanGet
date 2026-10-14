@@ -2,7 +2,6 @@
 <resources>
     <string name="about">Über</string>
     <string name="add_page">Seite hinzufügen</string>
-    <string name="app_tagline">Eine einfache und respektvolle App zum Scannen Ihrer Dokumente.</string>
     <string name="apply">Anwenden</string>
     <string name="back">Zurück</string>
     <string name="black_and_white_jpeg_hint">Schwarz-Weiß-Seiten wären kleiner und schärfer, wenn sie als PDF exportiert würden.</string>

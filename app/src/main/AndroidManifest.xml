@@ -6,7 +6,7 @@
         android:name="android.hardware.camera"
         android:required="false" />
     <uses-permission android:name="android.permission.CAMERA" />
-    <!-- Required (on Android 10 and lower) to save files, and to create the library folder -->
+    <!-- Required (on Android 10 and lower) to save exported files in the Downloads folder -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>
     <!-- To download Tesseract language data -->
     <uses-permission android:name="android.permission.INTERNET"/>

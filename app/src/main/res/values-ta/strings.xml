@@ -2,7 +2,6 @@
 <resources>
     <string name="about">பற்றி</string>
     <string name="add_page">கூட்டு page</string>
-    <string name="app_tagline">உங்கள் ஆவணங்களை வருடு செய்வதற்கான எளிய மற்றும் மரியாதைக்குரிய பயன்பாடு.</string>
     <string name="apply">இடு</string>
     <string name="back">பின்</string>
     <string name="black_and_white_jpeg_hint">கருப்பு-வெள்ளை பக்கங்களை PDF-ஆக ஏற்றுமதி செய்தால், அவை சிறியதாகவும் தெளிவானதாகவும் இருக்கும்.</string>

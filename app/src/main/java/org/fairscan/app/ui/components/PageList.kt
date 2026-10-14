@@ -219,13 +219,16 @@ private fun PageThumbnail(
     }
 }
 
-/** The number of a page, at the bottom of its thumbnail (in the strip and in the grid of pages). */
+/**
+ * The number of a page, at the bottom of its thumbnail: in the middle in the strip, and where
+ * [alignment] puts it (the bottom left corner in the grid of pages).
+ */
 @Composable
-fun BoxScope.PageNumberBadge(number: Int) {
+fun BoxScope.PageNumberBadge(number: Int, alignment: Alignment = Alignment.BottomCenter) {
     Box(
         modifier = Modifier
             .padding(8.dp)
-            .align(Alignment.BottomCenter)
+            .align(alignment)
             .background(Color.Black.copy(alpha = 0.5f), shape = RoundedCornerShape(4.dp))
             .padding(vertical = 0.dp, horizontal = 8.dp)
     ) {

@@ -28,6 +28,8 @@ import org.fairscan.app.data.ImageRepository
 import org.fairscan.app.data.LoadedDocument
 import org.fairscan.app.data.Logger
 import org.fairscan.app.data.toInfo
+import org.fairscan.app.domain.EncodedImage
+import org.fairscan.app.domain.Jpeg
 import org.fairscan.app.domain.PageViewKey
 import org.fairscan.app.domain.Png
 import org.fairscan.app.domain.ScanPage
@@ -55,7 +57,7 @@ class LibraryUnavailableException : IllegalStateException("The library folder is
 class LibraryRepository(
     private val storeProvider: () -> LibraryStore?,
     private val imageRepository: ImageRepository,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     private val logger: Logger,
     debounceMillis: Long = 500,
     private val clock: () -> Long = System::currentTimeMillis,
@@ -67,6 +69,8 @@ class LibraryRepository(
     private val lastOpened: LastOpenedDocument? = null,
     // Recognizes the text of the pages that are saved, if wanted
     private val ocr: LibraryOcr? = null,
+    // Receives a line with the time of a stage of opening a document (debug builds only)
+    private val trace: (String) -> Unit = {},
 ) {
     private val mutex = Mutex()
 
@@ -182,13 +186,20 @@ class LibraryRepository(
             val metadata = store.readMetadata(id) ?: return@withContext false
             lastOpened?.setLastOpenedId(id)
             if (imageRepository.documentInfo().id == id) return@withContext true
+            val started = System.nanoTime()
             closeWorkingDocument(store)
+            val closed = System.nanoTime()
             imageRepository.load(LoadedDocument(metadata.toInfo(), metadata.pages)) { pageId ->
                 store.readSource(id, pageId)
             }
+            val loaded = System.nanoTime()
             lastWritten = metadata
             lastCover = null
+            imageRepository.storedProcessed = storedProcessedOf(store, id)
             writeProcessedImages(store, id)
+            val done = System.nanoTime()
+            trace("open $id: close previous ${(closed - started) / 1_000_000} ms, copy ${metadata.pages.size} " +
+                "sources ${(loaded - closed) / 1_000_000} ms, processed images ${(done - loaded) / 1_000_000} ms")
             true
         }
     }
@@ -302,6 +313,27 @@ class LibraryRepository(
     }
 
     /**
+     * The processed images that the library holds for the document [id], as they are now: a page
+     * shown from one of them does not have to be rendered again from its original capture. Only an
+     * image made for exactly the rendering asked for is used (same render key).
+     */
+    private fun storedProcessedOf(store: LibraryStore, id: String): suspend (PageViewKey) -> EncodedImage? {
+        val stored = try {
+            store.processedPages(id)
+        } catch (e: Exception) {
+            logger.e(TAG, "Failed to list the processed images of $id", e)
+            return { null }
+        }
+        return { key ->
+            withContext(ioDispatcher) {
+                val entry = stored[key.pageId]
+                if (entry == null || entry.renderKey != key.renderKey()) null
+                else store.readProcessed(id, key.pageId)?.let { if (entry.isPng) Png(it) else Jpeg(it) }
+            }
+        }
+    }
+
+    /**
      * Keeps the processed image of each page of the document, the page as it is rendered now: made
      * again when the page was edited, removed when the page is gone. Then brings the OCR data up to
      * date (see [LibraryOcr]). Nothing here is needed to open the document, so a failure is only logged.
@@ -311,22 +343,90 @@ class LibraryRepository(
             val pages = imageRepository.pages()
             val name = imageRepository.documentInfo().name
             val stored = store.processedPages(id)
+            val toRender = mutableListOf<ScanPage>()
             for ((index, page) in pages.withIndex()) {
                 val renderKey = page.key().renderKey()
                 if (stored[page.id]?.renderKey == renderKey) continue
-                val image = imageRepository.image(page.key())
+                // Rendering a page from its original capture takes a long time (a second or more):
+                // it is not done here, with the library locked, but in the background
+                val image = imageRepository.imageIfRendered(page.key())
                 if (image == null) {
-                    logger.e(TAG, "No processed image to save for page ${page.id}", IllegalStateException("Missing image"))
+                    toRender += page
                     continue
                 }
-                val fileName = processedFileName(name, index, image is Png)
-                store.writeProcessed(id, page.id, renderKey, fileName, image.bytes)
+                saveProcessedImage(store, id, name, index, page, image)
             }
             for (pageId in stored.keys - pages.map { it.id }.toSet()) store.deleteProcessed(id, pageId)
             syncProcessedNames(store, id, name, pages.map { it.id })
             ocr?.pagesSaved(store, id, pages)
+            if (toRender.isNotEmpty()) renderInBackground(store, id, toRender)
         } catch (e: Exception) {
             logger.e(TAG, "Failed to save the processed images of $id", e)
+        }
+    }
+
+    private suspend fun saveProcessedImage(
+        store: LibraryStore, id: String, name: String, index: Int, page: ScanPage, image: EncodedImage,
+    ) {
+        val fileName = processedFileName(name, index, image is Png)
+        store.writeProcessed(id, page.id, page.key().renderKey(), fileName, image.bytes)
+        // The processed image is at hand (in memory): the thumbnails of the page are cheap to make now
+        // and are kept, so that opening the document later does not have to
+        imageRepository.getGridThumbnail(page.key())
+        imageRepository.getThumbnail(page.key())
+    }
+
+    // The pages being rendered for the library (document, page, rendering), so that none is done twice
+    private val rendering = HashSet<Triple<String, String, String>>()
+    private val backgroundJobs = mutableListOf<kotlinx.coroutines.Job>()
+
+    /**
+     * Renders [pages] from their original captures, one after another and without holding the library
+     * (the screens show them meanwhile, sharing the same work), and keeps each one when it is ready.
+     */
+    private fun renderInBackground(store: LibraryStore, id: String, pages: List<ScanPage>) {
+        val wanted = pages.filter { rendering.add(Triple(id, it.id, it.key().renderKey())) }
+        if (wanted.isEmpty()) return
+        val job = scope.launch(Dispatchers.Default) {
+            for (page in wanted) {
+                val renderKey = page.key().renderKey()
+                try {
+                    val image = imageRepository.image(page.key())
+                    if (image != null) {
+                        mutex.withLock {
+                            withContext(ioDispatcher) { keepRendered(store, id, page, renderKey, image) }
+                        }
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logger.e(TAG, "Failed to keep the processed image of page ${page.id}", e)
+                } finally {
+                    synchronized(rendering) { rendering.remove(Triple(id, page.id, renderKey)) }
+                }
+            }
+        }
+        synchronized(backgroundJobs) { backgroundJobs.add(job) }
+    }
+
+    // Only if it is still the document, the library and the rendering that were asked for
+    private suspend fun keepRendered(store: LibraryStore, id: String, page: ScanPage, renderKey: String, image: EncodedImage) {
+        if (store() !== store || imageRepository.documentInfo().id != id) return
+        val pages = imageRepository.pages()
+        val index = pages.indexOfFirst { it.id == page.id }
+        if (index < 0 || pages[index].key().renderKey() != renderKey) return
+        val name = imageRepository.documentInfo().name
+        saveProcessedImage(store, id, name, index, pages[index], image)
+        syncProcessedNames(store, id, name, pages.map { it.id })
+        ocr?.pagesSaved(store, id, pages)
+    }
+
+    /** Waits for the processed images being rendered in the background (for tests). */
+    internal suspend fun awaitBackgroundWork() {
+        while (true) {
+            val jobs = synchronized(backgroundJobs) { backgroundJobs.toList().also { backgroundJobs.clear() } }
+            if (jobs.isEmpty()) return
+            jobs.forEach { it.join() }
         }
     }
 

@@ -2,7 +2,6 @@
 <resources>
     <string name="about">Hakkında</string>
     <string name="add_page">Sayfa ekle</string>
-    <string name="app_tagline">Belgelerinizi taramak için basit ve saygılı bir uygulama.</string>
     <string name="apply">Uygula</string>
     <string name="back">Geri</string>
     <string name="black_and_white_jpeg_hint">Siyah-beyaz sayfalar, PDF olarak dışa aktarıldığında daha küçük ve daha keskin olurdu.</string>

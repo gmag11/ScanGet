@@ -54,22 +54,15 @@ class LibraryFolderViewModelTest {
     }
 
     private inner class FakePlatform : LibraryPlatform {
-        var allFilesAccess = false
-        var failToCreate = false
+        var failToOpen = false
         val safPermissions = mutableSetOf<String>()
         val released = mutableListOf<String>()
-        override fun hasAllFilesAccess() = allFilesAccess
-        override fun isFolderUsable(path: String) = File(path).isDirectory
-        override fun defaultFolderPath() = File(folder.root, "FairScan").path
-        override fun existingDirectStore(path: String) =
-            File(path).takeIf { it.isDirectory }?.let { FileLibraryStore(it) }
-        override fun directStore(path: String): LibraryStore {
-            check(!failToCreate) { "no space left" }
-            File(path).mkdirs(); return FileLibraryStore(File(path))
-        }
         override fun hasSafPermission(uri: String) = uri in safPermissions
         override fun isSafFolderReachable(uri: String) = File(uri).isDirectory
-        override fun safStore(uri: String) = FileLibraryStore(File(uri))
+        override fun safStore(uri: String): LibraryStore {
+            check(!failToOpen) { "the folder cannot be opened" }
+            return FileLibraryStore(File(uri))
+        }
         override fun safFolderName(uri: String) = File(uri).name
         override fun releaseSafPermission(uri: String) { safPermissions -= uri; released += uri }
     }
@@ -88,10 +81,10 @@ class LibraryFolderViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private suspend fun viewModel(allFilesAccessOffered: Boolean = true): LibraryFolderViewModel {
+    private suspend fun viewModel(): LibraryFolderViewModel {
         locations = LibraryLocations(settings, platform, LibraryMover(), emptyList())
         locations.load()
-        return LibraryFolderViewModel(locations, allFilesAccessOffered, { _, _, _ -> }, Dispatchers.Unconfined)
+        return LibraryFolderViewModel(locations, { _, _, _ -> }, Dispatchers.Unconfined)
     }
 
     private fun dir(name: String) = File(folder.root, name).apply { mkdirs() }
@@ -110,87 +103,25 @@ class LibraryFolderViewModelTest {
     }
 
     @Test
-    fun `the setup starts with nothing chosen and proposes FairScan`() = runTest {
+    fun `the setup starts with nothing chosen and no folder proposed`() = runTest {
         val vm = viewModel()
 
         assertThat(vm.uiState.value.status).isEqualTo(LibraryStatus.NotSetUp)
-        assertThat(vm.uiState.value.defaultFolderName).isEqualTo("FairScan")
-        assertThat(vm.uiState.value.allFilesAccessOffered).isTrue()
+        assertThat(vm.uiState.value.confirmation).isNull()
+        assertThat(vm.uiState.value.hasError).isFalse()
     }
 
     @Test
-    fun `without all files access it is asked for before the folder is created`() = runTest {
-        val vm = viewModel()
-        val received = events(vm)
-
-        vm.onUseDefaultFolder()
-
-        assertThat(received).containsExactly(LibraryFolderEvent.RequestAllFilesAccess)
-        assertThat(File(folder.root, "FairScan")).doesNotExist()
-        assertThat(vm.uiState.value.status).isEqualTo(LibraryStatus.NotSetUp)
-    }
-
-    @Test
-    fun `once all files access is granted the folder is created and used`() = runTest {
-        val vm = viewModel()
-        vm.onUseDefaultFolder()
-
-        platform.allFilesAccess = true
-        vm.onAllFilesAccessResult()
-
-        val location = LibraryLocation.Direct(File(folder.root, "FairScan").path)
-        assertThat(File(folder.root, "FairScan")).isDirectory()
-        assertThat(vm.uiState.value.status).isEqualTo(LibraryStatus.Ready(location))
-        assertThat(vm.uiState.value.confirmation).isNull() // an empty folder needs no confirmation
-        assertThat(settings.stored!!.value).isEqualTo(location.path)
-    }
-
-    @Test
-    fun `when all files access is refused the user is told and nothing is created`() = runTest {
-        val vm = viewModel()
-        vm.onUseDefaultFolder()
-
-        vm.onAllFilesAccessResult() // back from the system screen, still without access
-
-        assertThat(vm.uiState.value.permissionDenied).isTrue()
-        assertThat(vm.uiState.value.status).isEqualTo(LibraryStatus.NotSetUp)
-        assertThat(File(folder.root, "FairScan")).doesNotExist()
-    }
-
-    @Test
-    fun `with all files access already granted the folder is proposed at once`() = runTest {
-        platform.allFilesAccess = true
-        val vm = viewModel()
-        val received = events(vm)
-
-        vm.onUseDefaultFolder()
-
-        assertThat(received).isEmpty()
-        assertThat(vm.uiState.value.status).isInstanceOf(LibraryStatus.Ready::class.java)
-    }
-
-    @Test
-    fun `a build without all files access only offers the folder picker`() = runTest {
-        val vm = viewModel(allFilesAccessOffered = false)
-        val received = events(vm)
-
-        vm.onUseDefaultFolder()
-
-        assertThat(vm.uiState.value.allFilesAccessOffered).isFalse()
-        assertThat(received).containsExactly(LibraryFolderEvent.PickFolder(defaultFolderExists = false))
-    }
-
-    @Test
-    fun `the picker opens in FairScan only if that folder exists`() = runTest {
+    fun `choosing a folder opens the picker and writes nothing`() = runTest {
         val vm = viewModel()
         val received = events(vm)
 
         vm.onChooseFolder()
-        dir("FairScan")
-        vm.onChooseFolder()
 
-        assertThat(received).containsExactly(
-            LibraryFolderEvent.PickFolder(false), LibraryFolderEvent.PickFolder(true))
+        assertThat(received).containsExactly(LibraryFolderEvent.PickFolder)
+        assertThat(vm.uiState.value.status).isEqualTo(LibraryStatus.NotSetUp)
+        assertThat(settings.stored).isNull()
+        assertThat(folder.root.list()).isEmpty()
     }
 
     @Test
@@ -260,7 +191,7 @@ class LibraryFolderViewModelTest {
 
         assertThat(vm.uiState.value.confirmation).isNull()
         assertThat(platform.released).containsExactly(first.path)
-        assertThat(received).containsExactly(LibraryFolderEvent.PickFolder(false))
+        assertThat(received).containsExactly(LibraryFolderEvent.PickFolder)
         assertThat(vm.uiState.value.status).isEqualTo(LibraryStatus.NotSetUp)
         assertThat(settings.stored).isNull()
     }
@@ -269,8 +200,8 @@ class LibraryFolderViewModelTest {
     fun `when the library has documents elsewhere the user is offered to move them`() = runTest {
         val old = dir("Old"); val new = dir("New")
         addDocument(old, "d1"); addDocument(old, "d2")
-        settings.stored = StoredLibraryLocation(StoredLibraryLocation.Kind.DIRECT, old.path)
-        platform.allFilesAccess = true
+        settings.stored = StoredLibraryLocation(old.path, "Old")
+        platform.safPermissions += old.path
         platform.safPermissions += new.path
         val vm = viewModel()
 
@@ -280,7 +211,7 @@ class LibraryFolderViewModelTest {
         assertThat(offer.documentCount).isEqualTo(2)
         assertThat(offer.fromName).isEqualTo("Old")
         assertThat(offer.candidate).isEqualTo(LibraryLocation.Saf(new.path, "New")) // named for the dialog
-        assertThat(vm.uiState.value.status).isEqualTo(LibraryStatus.Ready(LibraryLocation.Direct(old.path)))
+        assertThat(vm.uiState.value.status).isEqualTo(LibraryStatus.Ready(LibraryLocation.Saf(old.path, "Old")))
 
         vm.onMoveAnswer(true)
 
@@ -295,8 +226,8 @@ class LibraryFolderViewModelTest {
     fun `not moving leaves the documents where they are`() = runTest {
         val old = dir("Old"); val new = dir("New")
         addDocument(old, "d1")
-        settings.stored = StoredLibraryLocation(StoredLibraryLocation.Kind.DIRECT, old.path)
-        platform.allFilesAccess = true
+        settings.stored = StoredLibraryLocation(old.path, "Old")
+        platform.safPermissions += old.path
         platform.safPermissions += new.path
         val vm = viewModel()
         vm.onFolderPicked(new.path)
@@ -311,8 +242,8 @@ class LibraryFolderViewModelTest {
     @Test
     fun `no move is offered when the current library is empty`() = runTest {
         val old = dir("Old"); val new = dir("New")
-        settings.stored = StoredLibraryLocation(StoredLibraryLocation.Kind.DIRECT, old.path)
-        platform.allFilesAccess = true
+        settings.stored = StoredLibraryLocation(old.path, "Old")
+        platform.safPermissions += old.path
         platform.safPermissions += new.path
         val vm = viewModel()
 
@@ -324,15 +255,32 @@ class LibraryFolderViewModelTest {
 
     @Test
     fun `a folder that cannot be used shows an error and is given up`() = runTest {
-        platform.allFilesAccess = true
-        platform.failToCreate = true
+        val picked = dir("Scans")
+        platform.safPermissions += picked.path
+        platform.failToOpen = true
         val vm = viewModel()
 
-        vm.onUseDefaultFolder()
+        vm.onFolderPicked(picked.path)
 
         assertThat(vm.uiState.value.hasError).isTrue()
         assertThat(vm.uiState.value.isWorking).isFalse()
         assertThat(vm.uiState.value.status).isEqualTo(LibraryStatus.NotSetUp)
         assertThat(settings.stored).isNull()
+        assertThat(platform.released).containsExactly(picked.path)
+    }
+
+    @Test
+    fun `a library saved as a path by an earlier build asks for the folder again`() = runTest {
+        // The settings do not return a location that was saved as a path, so nothing is set up
+        val vm = viewModel()
+        val picked = dir("FairScan")
+        (1..2).forEach { addDocument(picked, "d$it") }
+        platform.safPermissions += picked.path
+
+        assertThat(vm.uiState.value.status).isEqualTo(LibraryStatus.NotSetUp)
+        vm.onFolderPicked(picked.path)
+        vm.onConfirmFolder()
+
+        assertThat(locations.currentStore()!!.list()).hasSize(2)
     }
 }

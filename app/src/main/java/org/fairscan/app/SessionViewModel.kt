@@ -14,6 +14,7 @@
  */
 package org.fairscan.app
 
+import android.util.Log
 import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
@@ -21,6 +22,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.fairscan.app.data.ImageRepository
+import org.fairscan.app.data.ThumbnailCache
 import org.fairscan.app.data.Logger
 import org.fairscan.app.data.library.LastOpenedDocument
 import org.fairscan.app.data.library.LibraryIndex
@@ -123,6 +125,10 @@ class ScanSessionContainer(
         scope,
         logger,
         documentNamer,
+        trace = { if (BuildConfig.DEBUG) Log.d("ThumbTiming", it) },
+        // Shared by the sessions: a thumbnail made in one is found by the next
+        thumbnailDiskCache = ThumbnailCache(
+            File(context.cacheDir, "page-thumbnails"), thumbnailSizePx, gridThumbnailSizePx),
     )
 
     val libraryRepository: LibraryRepository? = libraryLocations?.let { locations ->
@@ -135,6 +141,7 @@ class ScanSessionContainer(
             locationKey = locations::currentKey,
             lastOpened = lastOpened,
             ocr = libraryOcr,
+            trace = { if (BuildConfig.DEBUG) Log.d("ThumbTiming", it) },
         )
     }
 }

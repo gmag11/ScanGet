@@ -79,10 +79,10 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -369,22 +369,25 @@ private fun PageCell(
             if (isDragging || isSelected) MaterialTheme.colorScheme.primary
                 else MaterialTheme.colorScheme.outlineVariant),
     ) {
-        // The cell is a square whatever the page: the thumbnail is fitted inside it, whole and centered,
-        // and until it is ready the cell is already its final size
+        // The cell is a square whatever the page: the thumbnail fills it (see thumbnailFill), what does
+        // not fit is cut off, and until it is ready the cell is already its final size
         Box(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
                 .background(MaterialTheme.colorScheme.surfaceVariant)
+                .clipToBounds()
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
             val image = bitmap
             if (image != null) {
+                val fill = thumbnailFill(image.width, image.height)
                 Image(
                     bitmap = image.asImageBitmap(),
                     contentDescription = "$number",
-                    contentScale = ContentScale.Fit,
+                    contentScale = fill.scale,
+                    alignment = fill.alignment,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -487,11 +490,32 @@ private fun SelectionTopBar(
 private fun previewDocument(pages: Int) = DocumentUiModel(
     (1..pages).map { PageThumbnail(PageViewKey("$it", Rotation.R0, null, 0), null) }.toImmutableList())
 
+// A page of a given proportion with a few lines, to see how it fills its cell
+private fun previewPage(width: Int, height: Int): Bitmap {
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bitmap)
+    canvas.drawColor(android.graphics.Color.WHITE)
+    val paint = android.graphics.Paint().apply { color = android.graphics.Color.DKGRAY }
+    var y = height / 12f
+    while (y < height) {
+        canvas.drawRect(width / 10f, y, width * 0.9f, y + height / 40f, paint)
+        y += height / 14f
+    }
+    paint.color = android.graphics.Color.RED
+    canvas.drawRect(0f, 0f, width.toFloat(), height / 60f + 2, paint) // top edge
+    canvas.drawRect(0f, 0f, width / 60f + 2, height.toFloat(), paint) // left edge
+    return bitmap
+}
+
 @Composable
-private fun OverviewPreview(pages: Int, name: String = "Invoice March") {
+private fun OverviewPreview(
+    pages: Int,
+    name: String = "Invoice March",
+    loadThumbnail: suspend (PageViewKey) -> Bitmap? = { null },
+) {
     FairScanTheme {
         DocumentOverviewScreen(name, previewDocument(pages), dummyNavigation(), {}, { _, _ -> }, {}, {},
-            { true }, {}, { null }, PageActions({}, { _, _ -> }, { _, _ -> }, { emptyList() }),
+            { true }, {}, loadThumbnail, PageActions({}, { _, _ -> }, { _, _ -> }, { emptyList() }),
             PageTransferState.Idle, {})
     }
 }
@@ -513,4 +537,17 @@ fun DocumentOverviewScreenTabletPreview() {
 @Composable
 fun DocumentOverviewScreenSinglePagePreview() {
     OverviewPreview(pages = 1, name = "A document with a rather long name that does not fit on one line")
+}
+
+@Preview(showBackground = true)
+@Composable
+fun DocumentOverviewScreenPageShapesPreview() {
+    // Pages 1, 4: portrait; 2, 5: landscape; 3, 6: square
+    OverviewPreview(pages = 6) { key ->
+        when (key.pageId.toInt() % 3) {
+            1 -> previewPage(170, 240)
+            2 -> previewPage(240, 170)
+            else -> previewPage(200, 200)
+        }
+    }
 }

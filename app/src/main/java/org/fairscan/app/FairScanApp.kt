@@ -57,8 +57,9 @@ class FairScanApp : Application() {
 
 const val THUMBNAIL_SIZE_DP = 120
 
-// Pages in the grid of the document overview (cells of 150 to 180dp)
-const val GRID_THUMBNAIL_SIZE_DP = 240
+// Pages in the grid of the document overview (cells of 150 to 230dp): a portrait page fills the width of
+// the cell, so its longest side is made big enough for the widest cell (230dp / 0.7 for an A4 page)
+const val GRID_THUMBNAIL_SIZE_DP = 330
 
 private val Context.dataStore by preferencesDataStore(name = "fairscan_settings")
 

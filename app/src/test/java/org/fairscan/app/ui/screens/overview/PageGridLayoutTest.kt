@@ -14,6 +14,8 @@
  */
 package org.fairscan.app.ui.screens.overview
 
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.ContentScale
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
 
@@ -61,5 +63,25 @@ class PageGridLayoutTest {
             val (columns, cell) = layout(width)
             assertThat(cell * columns + PAGE_GRID_GAP_DP * (columns - 1)).isCloseTo(width - 32f, org.assertj.core.data.Offset.offset(0.01f))
         }
+    }
+
+    @Test
+    fun `a portrait page fills the width and is aligned to the top`() {
+        val fill = thumbnailFill(width = 170, height = 240)
+        assertThat(fill.scale).isEqualTo(ContentScale.FillWidth)
+        assertThat(fill.alignment).isEqualTo(Alignment.TopStart)
+    }
+
+    @Test
+    fun `a landscape page fills the height and is aligned to the left`() {
+        val fill = thumbnailFill(width = 240, height = 170)
+        assertThat(fill.scale).isEqualTo(ContentScale.FillHeight)
+        assertThat(fill.alignment).isEqualTo(Alignment.CenterStart)
+    }
+
+    @Test
+    fun `a square page fills the cell with nothing cut off`() {
+        // Width and height are the same size, so either way the page is shown whole
+        assertThat(thumbnailFill(200, 200).scale).isEqualTo(ContentScale.FillHeight)
     }
 }

@@ -15,6 +15,8 @@
 package org.fairscan.app.ui.screens.overview
 
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Density
 import kotlin.math.max
 
@@ -49,3 +51,15 @@ internal object PageGridCells : GridCells {
         return List(columns) { if (it < remainder) cell + 1 else cell }
     }
 }
+
+/** How a thumbnail fills its square cell: how it is scaled, and which part of it stays in view. */
+internal data class ThumbnailFill(val scale: ContentScale, val alignment: Alignment)
+
+/**
+ * A portrait page fills the width of the cell and is aligned to the top, a landscape page fills the
+ * height and is aligned to the left; a square page fills the cell as it is. What does not fit is cut
+ * off by the cell.
+ */
+internal fun thumbnailFill(width: Int, height: Int): ThumbnailFill =
+    if (height > width) ThumbnailFill(ContentScale.FillWidth, Alignment.TopStart)
+    else ThumbnailFill(ContentScale.FillHeight, Alignment.CenterStart)

@@ -1054,4 +1054,90 @@ class LibraryRepositoryTest {
         s.library.flush()
         assertThat(store.processedPages(id).getValue(page.id).renderKey).isEqualTo(current)
     }
+
+    // --- Copying pages to another document ---
+
+    private suspend fun TestScope.workingWithPages(count: Int): Session {
+        val s = session("work")
+        repeat(count) { s.addPage((it + 1).toByte()) }
+        advanceTimeBy(600); runCurrent()
+        return s
+    }
+
+    @Test
+    fun `pages are copied to a new document in order, with their own ids`() = runTest {
+        val s = workingWithPages(3)
+        val pages = s.images.pages()
+
+        val target = s.library.appendPages(listOf(pages[2].id, pages[0].id), null)
+
+        val copied = store.readMetadata(target.id)!!
+        assertThat(copied.pages).hasSize(2)
+        // In the order of the document, not of the request
+        assertThat(store.readSource(target.id, copied.pages[0].id)).isEqualTo(byteArrayOf(1))
+        assertThat(store.readSource(target.id, copied.pages[1].id)).isEqualTo(byteArrayOf(3))
+        assertThat(copied.pages.map { it.id }).doesNotContainAnyElementsOf(pages.map { it.id })
+        assertThat(copied.pages[0].quad).isEqualTo(s.images.snapshot().pages[0].quad)
+        // The working document did not change
+        assertThat(s.images.pages().map { it.id }).containsExactlyElementsOf(pages.map { it.id })
+        assertThat(store.list()).hasSize(2)
+        assertThat(store.processedPages(target.id)).hasSize(2)
+    }
+
+    @Test
+    fun `pages are appended at the end of an existing document`() = runTest {
+        val s = workingWithPages(2)
+        val first = s.images.documentInfo().id
+        s.library.startNewDocument()
+        s.addPage(9)
+        advanceTimeBy(600); runCurrent()
+        val other = s.images.documentInfo().id
+        s.library.open(first)
+        val pages = s.images.pages()
+
+        s.library.appendPages(listOf(pages[1].id), other)
+
+        val result = store.readMetadata(other)!!
+        assertThat(result.pages).hasSize(2)
+        assertThat(store.readSource(other, result.pages[0].id)).isEqualTo(byteArrayOf(9))
+        assertThat(store.readSource(other, result.pages[1].id)).isEqualTo(byteArrayOf(2))
+    }
+
+    @Test
+    fun `a copy is independent from the original`() = runTest {
+        val s = workingWithPages(1)
+        val page = s.images.pages().single()
+        val target = s.library.appendPages(listOf(page.id), null)
+
+        s.images.setRendering(page.id, GRAYSCALE, Adjustments.NEUTRAL)
+        s.library.flush()
+
+        val copy = store.readMetadata(target.id)!!.pages.single()
+        assertThat(copy.colorMode).isEqualTo(COLOR)
+        assertThat(store.readSource(target.id, copy.id)).isEqualTo(byteArrayOf(1))
+    }
+
+    @Test
+    fun `copying to the working document or to an unknown one is refused and writes nothing`() = runTest {
+        val s = workingWithPages(1)
+        val page = s.images.pages().single()
+        val own = s.images.documentInfo().id
+
+        assertThat(runCatching { s.library.appendPages(listOf(page.id), own) }.isFailure).isTrue()
+        assertThat(runCatching { s.library.appendPages(listOf(page.id), "nope") }.isFailure).isTrue()
+        assertThat(store.list()).hasSize(1)
+    }
+
+    @Test
+    fun `the other documents do not include the working one`() = runTest {
+        val s = workingWithPages(1)
+        s.library.startNewDocument()
+        s.addPage(5)
+        advanceTimeBy(600); runCurrent()
+
+        val others = s.library.otherDocuments()
+
+        assertThat(others).hasSize(1)
+        assertThat(others.single().info.id).isNotEqualTo(s.images.documentInfo().id)
+    }
 }

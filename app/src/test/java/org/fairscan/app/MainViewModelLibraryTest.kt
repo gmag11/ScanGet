@@ -312,4 +312,78 @@ class MainViewModelLibraryTest {
         awaitUntil { viewModel.documentName.value.isNotEmpty() }
         assertThat(viewModel.documentName.value).isNotEmpty()
     }
+
+    // --- Page actions of the overview ---
+
+    private suspend fun TestScope.transferDone() {
+        awaitUntil { viewModel.pageTransfer.value !is PageTransferState.Running }
+    }
+
+    @Test
+    fun `moving pages to a new document removes them from the open one`() = runTest {
+        createViewModel()
+        addPages(4)
+        val id = viewModel.imageRepository.documentInfo().id
+        val pages = viewModel.imageRepository.pages()
+
+        viewModel.movePages(setOf(pages[1].id, pages[2].id), null)
+        awaitUntil { viewModel.pageTransfer.value is PageTransferState.Done }
+
+        assertThat(viewModel.imageRepository.pages().map { it.id }).containsExactly(pages[0].id, pages[3].id)
+        library().flush()
+        val others = store.list().filter { it.info.id != id }
+        assertThat(others.single().pageCount).isEqualTo(2)
+    }
+
+    @Test
+    fun `copying pages keeps the open document as it is`() = runTest {
+        createViewModel()
+        addPages(2)
+        val pages = viewModel.imageRepository.pages()
+
+        viewModel.copyPages(setOf(pages[0].id), null)
+        awaitUntil { viewModel.pageTransfer.value is PageTransferState.Done }
+
+        assertThat(viewModel.imageRepository.pages()).hasSize(2)
+        assertThat(store.list()).hasSize(2)
+    }
+
+    @Test
+    fun `a move that cannot write the destination keeps the pages`() = runTest {
+        createViewModel()
+        addPages(2)
+        val pages = viewModel.imageRepository.pages()
+
+        viewModel.movePages(setOf(pages[0].id), "unknown")
+        awaitUntil { viewModel.pageTransfer.value is PageTransferState.Failed }
+
+        assertThat(viewModel.imageRepository.pages()).hasSize(2)
+    }
+
+    @Test
+    fun `moving every page removes the emptied document`() = runTest {
+        createViewModel()
+        addPages(2)
+        val id = viewModel.imageRepository.documentInfo().id
+        val pages = viewModel.imageRepository.pages()
+
+        viewModel.movePages(pages.map { it.id }.toSet(), null)
+        awaitUntil { viewModel.pageTransfer.value is PageTransferState.Done }
+        advanceUntilIdle()
+
+        assertThat(store.readMetadata(id)).isNull()
+        assertThat(store.list().single().pageCount).isEqualTo(2)
+    }
+
+    @Test
+    fun `deleting pages removes only those`() = runTest {
+        createViewModel()
+        addPages(3)
+        val pages = viewModel.imageRepository.pages()
+
+        viewModel.deletePages(setOf(pages[0].id))
+        awaitUntil { viewModel.pageTransfer.value is PageTransferState.Done }
+
+        assertThat(viewModel.imageRepository.pages().map { it.id }).containsExactly(pages[1].id, pages[2].id)
+    }
 }

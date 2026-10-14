@@ -184,4 +184,34 @@
     <string name="library_share_cancel">Cancelar el envío</string>
     <string name="settings_ocr_on_save">Reconocer el texto al guardar un escaneo</string>
     <string name="settings_ocr_on_save_summary">Se hace en segundo plano: los PDF se generan más rápido y se puede buscar por el texto de los documentos</string>
+    <!-- Vista de documento: selección de páginas -->
+    <string name="page_selection_close">Cerrar la selección</string>
+    <string name="page_action_move">Mover</string>
+    <string name="page_action_copy">Copiar</string>
+    <plurals name="page_delete_title">
+        <item quantity="one">¿Eliminar %d página?</item>
+        <item quantity="other">¿Eliminar %d páginas?</item>
+    </plurals>
+    <string name="page_delete_message">Se eliminarán las páginas y sus capturas originales.</string>
+    <string name="page_destination_move_title">Mover a</string>
+    <string name="page_destination_copy_title">Copiar a</string>
+    <string name="page_destination_new">Documento nuevo</string>
+    <string name="page_destination_loading">Cargando documentos…</string>
+    <plurals name="page_destination_pages">
+        <item quantity="one">%1$d página</item>
+        <item quantity="other">%1$d páginas</item>
+    </plurals>
+    <plurals name="page_transfer_deleted">
+        <item quantity="one">%d página eliminada</item>
+        <item quantity="other">%d páginas eliminadas</item>
+    </plurals>
+    <plurals name="page_transfer_copied">
+        <item quantity="one">%1$d página copiada a «%2$s»</item>
+        <item quantity="other">%1$d páginas copiadas a «%2$s»</item>
+    </plurals>
+    <plurals name="page_transfer_moved">
+        <item quantity="one">%1$d página movida a «%2$s»</item>
+        <item quantity="other">%1$d páginas movidas a «%2$s»</item>
+    </plurals>
+    <string name="page_transfer_failed">No se pudieron mover o copiar las páginas. No se ha eliminado nada.</string>
 </resources>

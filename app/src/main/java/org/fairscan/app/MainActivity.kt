@@ -87,6 +87,7 @@ import org.fairscan.app.ui.screens.library.LibraryActions
 import org.fairscan.app.ui.screens.library.LibraryScreen
 import org.fairscan.app.ui.screens.library.LibraryViewModel
 import org.fairscan.app.ui.screens.overview.DocumentOverviewScreen
+import org.fairscan.app.ui.screens.overview.PageActions
 import org.fairscan.app.ui.screens.setup.LibraryFolderDialogs
 import org.fairscan.app.ui.screens.settings.LibraryFolderSetting
 import org.fairscan.app.ui.screens.settings.SettingsScreen
@@ -277,6 +278,7 @@ class MainActivity : ComponentActivity() {
                     is Screen.Main.Overview -> {
                         BackHandler { navigation.back() }
                         val documentName by viewModel.documentName.collectAsStateWithLifecycle()
+                        val pageTransfer by viewModel.pageTransfer.collectAsStateWithLifecycle()
                         DocumentOverviewScreen(
                             documentName = documentName,
                             document = document,
@@ -293,6 +295,14 @@ class MainActivity : ComponentActivity() {
                             onRename = viewModel::renameDocument,
                             onDeleteDocument = viewModel::deleteCurrentDocument,
                             loadThumbnail = viewModel::gridThumbnail,
+                            pageActions = PageActions(
+                                onDelete = viewModel::deletePages,
+                                onCopy = viewModel::copyPages,
+                                onMove = viewModel::movePages,
+                                loadDestinations = viewModel::otherDocuments,
+                            ),
+                            transfer = pageTransfer,
+                            onTransferShown = viewModel::pageTransferShown,
                         )
                     }
                     is Screen.Main.LibrarySetup -> {

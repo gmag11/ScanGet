@@ -17,6 +17,7 @@ package org.fairscan.app.ui.screens.overview
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import androidx.compose.foundation.BorderStroke
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -60,6 +61,23 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import org.fairscan.app.PageTransferState
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.automirrored.filled.DriveFileMove
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
@@ -106,14 +124,63 @@ fun DocumentOverviewScreen(
     onRename: (String) -> Boolean,
     onDeleteDocument: () -> Unit,
     loadThumbnail: suspend (PageViewKey) -> Bitmap?,
+    pageActions: PageActions,
+    transfer: PageTransferState,
+    onTransferShown: () -> Unit,
 ) {
     var renaming by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
+    var selected by rememberSaveable(stateSaver = SelectionSaver) { mutableStateOf(emptySet<String>()) }
+    var deletingPages by remember { mutableStateOf(false) }
+    var choosingDestination by remember { mutableStateOf<PageTransferKind?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val resources = LocalContext.current.resources
+    val running = transfer is PageTransferState.Running
+
+    // What is selected can only be pages that still exist
+    val existing = document.pages.map { it.key.pageId }.toSet()
+    if (selected.any { it !in existing }) selected = selected intersect existing
+    val selecting = selected.isNotEmpty()
+    BackHandler(enabled = selecting && !running) { selected = emptySet() }
+
+    LaunchedEffect(transfer) {
+        when (transfer) {
+            is PageTransferState.Done -> {
+                selected = emptySet()
+                val count = transfer.count
+                val name = transfer.documentName
+                snackbarHostState.showSnackbar(when (transfer.action) {
+                    PageTransferState.Action.DELETED ->
+                        resources.getQuantityString(R.plurals.page_transfer_deleted, count, count)
+                    PageTransferState.Action.COPIED ->
+                        resources.getQuantityString(R.plurals.page_transfer_copied, count, count, name)
+                    PageTransferState.Action.MOVED ->
+                        resources.getQuantityString(R.plurals.page_transfer_moved, count, count, name)
+                })
+                onTransferShown()
+            }
+            is PageTransferState.Failed -> {
+                snackbarHostState.showSnackbar(resources.getString(R.string.page_transfer_failed))
+                onTransferShown()
+            }
+            else -> {}
+        }
+    }
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
+            if (selecting) {
+                SelectionTopBar(
+                    count = selected.size,
+                    enabled = !running,
+                    onClose = { selected = emptySet() },
+                    onMove = { choosingDestination = PageTransferKind.MOVE },
+                    onCopy = { choosingDestination = PageTransferKind.COPY },
+                    onDelete = { deletingPages = true },
+                )
+            } else TopAppBar(
                 navigationIcon = { BackButton(navigation.back) },
                 title = {
                     Row(
@@ -150,8 +217,8 @@ fun DocumentOverviewScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        AddPageButton(onAddPage)
-                        ExportButton(onExport)
+                        AddPageButton(onAddPage, enabled = !selecting)
+                        ExportButton(onExport, enabled = !selecting)
                     }
                 }
             }
@@ -160,7 +227,7 @@ fun DocumentOverviewScreen(
         Box(Modifier.padding(innerPadding).fillMaxSize()) {
             if (isLandscape) {
                 Row(Modifier.fillMaxSize()) {
-                    PageGrid(document, onPageClick, onPageReorder, loadThumbnail, Modifier.weight(2f))
+                    PageGrid(document, selected, { selected = it }, onPageClick, onPageReorder, loadThumbnail, Modifier.weight(2f))
                     Column(
                         modifier = Modifier
                             .weight(1f)
@@ -170,12 +237,19 @@ fun DocumentOverviewScreen(
                         verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        AddPageButton(onAddPage)
-                        ExportButton(onExport)
+                        AddPageButton(onAddPage, enabled = !selecting)
+                        ExportButton(onExport, enabled = !selecting)
                     }
                 }
             } else {
-                PageGrid(document, onPageClick, onPageReorder, loadThumbnail, Modifier.fillMaxSize())
+                PageGrid(document, selected, { selected = it }, onPageClick, onPageReorder, loadThumbnail, Modifier.fillMaxSize())
+            }
+            if (running) {
+                // Nothing can be touched while pages are being copied or moved
+                Box(Modifier.fillMaxSize().pointerInput(Unit) {
+                    awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } }
+                })
+                LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
             }
         }
     }
@@ -185,6 +259,25 @@ fun DocumentOverviewScreen(
             current = documentName,
             onConfirm = { name -> if (onRename(name)) renaming = false },
             onDismiss = { renaming = false },
+        )
+    }
+    if (deletingPages && selecting) {
+        DeletePagesDialog(
+            count = selected.size,
+            onConfirm = { deletingPages = false; pageActions.onDelete(selected) },
+            onDismiss = { deletingPages = false },
+        )
+    }
+    choosingDestination?.let { kind ->
+        PageDestinationDialog(
+            kind = kind,
+            loadDestinations = pageActions.loadDestinations,
+            onChosen = { target ->
+                choosingDestination = null
+                if (kind == PageTransferKind.MOVE) pageActions.onMove(selected, target)
+                else pageActions.onCopy(selected, target)
+            },
+            onDismiss = { choosingDestination = null },
         )
     }
     if (deleting) {
@@ -198,13 +291,21 @@ fun DocumentOverviewScreen(
 @Composable
 private fun PageGrid(
     document: DocumentUiModel,
+    selected: Set<String>,
+    onSelectionChange: (Set<String>) -> Unit,
     onPageClick: (Int) -> Unit,
     onPageReorder: (String, Int) -> Unit,
     loadThumbnail: suspend (PageViewKey) -> Bitmap?,
     modifier: Modifier,
 ) {
     val gridState = rememberLazyGridState()
+    // A long press that is released without moving the page starts the selection
+    var reordered by remember { mutableStateOf(false) }
+    // Releasing a long press must not also count as a tap on the page
+    val longPressActive = remember { booleanArrayOf(false) }
+    val selecting = selected.isNotEmpty()
     val reorderState = rememberReorderableLazyGridState(gridState) { from, to ->
+        reordered = true
         onPageReorder(document.pages[from.index].key.pageId, to.index)
     }
     LazyVerticalGrid(
@@ -217,13 +318,29 @@ private fun PageGrid(
     ) {
         itemsIndexed(document.pages, key = { _, page -> page.key.pageId }) { index, page ->
             ReorderableItem(reorderState, key = page.key.pageId) { isDragging ->
+                val pageId = page.key.pageId
                 PageCell(
                     key = page.key,
                     number = index + 1,
                     isDragging = isDragging,
+                    isSelected = pageId in selected,
                     loadThumbnail = loadThumbnail,
-                    onClick = { onPageClick(index) },
-                    modifier = Modifier.longPressDraggableHandle(),
+                    onClick = {
+                        if (longPressActive[0]) {
+                            // The release of a long press
+                        } else if (selecting) {
+                            onSelectionChange(if (pageId in selected) selected - pageId else selected + pageId)
+                        } else onPageClick(index)
+                    },
+                    modifier = Modifier.longPressDraggableHandle(
+                        enabled = !selecting,
+                        onDragStarted = { reordered = false; longPressActive[0] = true },
+                        onDragStopped = {
+                            if (!reordered) onSelectionChange(setOf(pageId))
+                            // The tap of the release has already come (before this): taps count again
+                            longPressActive[0] = false
+                        },
+                    ),
                 )
             }
         }
@@ -235,6 +352,7 @@ private fun PageCell(
     key: PageViewKey,
     number: Int,
     isDragging: Boolean,
+    isSelected: Boolean,
     loadThumbnail: suspend (PageViewKey) -> Bitmap?,
     onClick: () -> Unit,
     modifier: Modifier,
@@ -247,8 +365,9 @@ private fun PageCell(
         shape = shape,
         elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 6.dp else 1.dp),
         border = BorderStroke(
-            if (isDragging) 2.dp else 1.dp,
-            if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+            if (isDragging || isSelected) 2.dp else 1.dp,
+            if (isDragging || isSelected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.outlineVariant),
     ) {
         // The cell is a square whatever the page: the thumbnail is fitted inside it, whole and centered,
         // and until it is ready the cell is already its final size
@@ -270,14 +389,28 @@ private fun PageCell(
                 )
             }
             PageNumberBadge(number, Alignment.BottomStart)
+            if (isSelected) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .size(24.dp)
+                        .background(MaterialTheme.colorScheme.primary, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Default.Done, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(16.dp))
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun AddPageButton(onClick: () -> Unit) {
+private fun AddPageButton(onClick: () -> Unit, enabled: Boolean = true) {
     OutlinedButton(
         onClick = onClick,
+        enabled = enabled,
         colors = ButtonDefaults.buttonColors(
             containerColor = Color.Transparent,
             contentColor = MaterialTheme.colorScheme.primary,
@@ -291,11 +424,61 @@ private fun AddPageButton(onClick: () -> Unit) {
 }
 
 @Composable
-private fun ExportButton(onClick: () -> Unit) {
+private fun ExportButton(onClick: () -> Unit, enabled: Boolean = true) {
     MainActionButton(
         onClick = onClick,
+        enabled = enabled,
         text = stringResource(R.string.export),
         icon = Icons.Default.Done,
+    )
+}
+
+private val SelectionSaver = listSaver<Set<String>, String>(save = { it.toList() }, restore = { it.toSet() })
+
+/** The bar shown while pages are selected: how many, and Move, Copy and Delete in a menu. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SelectionTopBar(
+    count: Int,
+    enabled: Boolean,
+    onClose: () -> Unit,
+    onMove: () -> Unit,
+    onCopy: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    TopAppBar(
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        navigationIcon = {
+            IconButton(onClick = onClose, enabled = enabled) {
+                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.page_selection_close))
+            }
+        },
+        title = { Text(stringResource(R.string.pages_selected, count)) },
+        actions = {
+            Box {
+                IconButton(onClick = { expanded = true }, enabled = enabled) {
+                    Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.menu))
+                }
+                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    DropdownMenuItem(
+                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.DriveFileMove, contentDescription = null) },
+                        text = { Text(stringResource(R.string.page_action_move)) },
+                        onClick = { expanded = false; onMove() },
+                    )
+                    DropdownMenuItem(
+                        leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
+                        text = { Text(stringResource(R.string.page_action_copy)) },
+                        onClick = { expanded = false; onCopy() },
+                    )
+                    DropdownMenuItem(
+                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
+                        text = { Text(stringResource(R.string.delete)) },
+                        onClick = { expanded = false; onDelete() },
+                    )
+                }
+            }
+        },
     )
 }
 
@@ -308,7 +491,8 @@ private fun previewDocument(pages: Int) = DocumentUiModel(
 private fun OverviewPreview(pages: Int, name: String = "Invoice March") {
     FairScanTheme {
         DocumentOverviewScreen(name, previewDocument(pages), dummyNavigation(), {}, { _, _ -> }, {}, {},
-            { true }, {}, { null })
+            { true }, {}, { null }, PageActions({}, { _, _ -> }, { _, _ -> }, { emptyList() }),
+            PageTransferState.Idle, {})
     }
 }
 

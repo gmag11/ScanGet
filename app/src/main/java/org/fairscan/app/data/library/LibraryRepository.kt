@@ -25,14 +25,19 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.fairscan.app.data.DocumentMetadataV3
 import org.fairscan.app.data.ImageRepository
+import org.fairscan.app.data.DocumentInfo
 import org.fairscan.app.data.LoadedDocument
 import org.fairscan.app.data.Logger
+import org.fairscan.app.data.PageV2
+import org.fairscan.app.data.newDocumentId
 import org.fairscan.app.data.toInfo
 import org.fairscan.app.domain.EncodedImage
 import org.fairscan.app.domain.Jpeg
 import org.fairscan.app.domain.PageViewKey
 import org.fairscan.app.domain.Png
 import org.fairscan.app.domain.ScanPage
+import org.fairscan.app.ui.screens.settings.DefaultFilenameStyle
+import java.util.Date
 
 private const val TAG = "LibraryRepository"
 private const val MAX_ID_ATTEMPTS = 5
@@ -71,6 +76,8 @@ class LibraryRepository(
     private val ocr: LibraryOcr? = null,
     // Receives a line with the time of a stage of opening a document (debug builds only)
     private val trace: (String) -> Unit = {},
+    // Default name of a document created at the given time (epoch millis)
+    private val documentNamer: (Long) -> String = { DefaultFilenameStyle.SCAN_DATE_TIME.filename(Date(it)) },
 ) {
     private val mutex = Mutex()
 
@@ -259,6 +266,79 @@ class LibraryRepository(
             store.delete(id)
             if (lastOpened?.lastOpenedId() == id) lastOpened.setLastOpenedId(null)
         }
+    }
+
+    /**
+     * Adds a copy of the pages [pageIds] of the working document, in their order in it, at the end of
+     * the saved document [targetId], or of a new document if it is null. Returns the id and the name of
+     * the document that received them. The copies have their own page ids and keep the capture, the
+     * editing data, the processed image and the OCR data of the originals; the working document does
+     * not change. The description of the target is written last, so that it never refers to missing
+     * files.
+     */
+    suspend fun appendPages(pageIds: Collection<String>, targetId: String?): DocumentInfo {
+        flush()
+        return mutex.withLock {
+            withContext(ioDispatcher) {
+                val store = store() ?: throw LibraryUnavailableException()
+                val working = imageRepository.snapshot()
+                require(targetId != working.id) { "The target is the working document" }
+                val records = working.pages.filter { it.id in pageIds }
+                require(records.isNotEmpty()) { "No page to copy" }
+                val scanPages = imageRepository.pages().associateBy { it.id }
+                val target = if (targetId == null) newDocument(store)
+                    else store.readMetadata(targetId) ?: throw IllegalArgumentException("Unknown document $targetId")
+                val used = target.pages.map { it.id }.toMutableSet()
+                val firstNew = target.pages.size
+                val copies = ArrayList<PageV2>()
+                var next = clock()
+                for ((offset, record) in records.withIndex()) {
+                    while (next.toString() in used) next++
+                    val newId = next.toString()
+                    used += newId
+                    copies += record.copy(id = newId)
+                    val source = imageRepository.source(record.id)
+                        ?: throw IllegalStateException("No source for page ${record.id}")
+                    store.writeSource(target.id, newId, source.bytes)
+                    val page = scanPages[record.id]
+                    val image = page?.let { imageRepository.imageIfRendered(it.key()) }
+                    if (page != null && image != null) {
+                        store.writeProcessed(target.id, newId, page.key().renderKey(),
+                            processedFileName(target.name, firstNew + offset, image is Png), image.bytes)
+                    }
+                    store.readOcr(working.id, record.id)
+                        ?.takeIf { page != null && it.renderKey == page.key().renderKey() }
+                        ?.let { store.writeOcr(target.id, newId, it) }
+                }
+                val updated = target.copy(pages = target.pages + copies, updatedAt = clock())
+                store.writeMetadata(updated)
+                if (firstNew == 0) {
+                    val first = scanPages[records.first().id]
+                    val cover = first?.let { imageRepository.getThumbnail(it.key()) }
+                    if (cover != null) store.writeCover(target.id, cover.bytes)
+                }
+                syncProcessedNames(store, target.id, target.name, updated.pages.map { it.id })
+                updated.toInfo()
+            }
+        }
+    }
+
+    /** The saved documents other than the working one, to choose where to copy or move pages. */
+    suspend fun otherDocuments(): List<LibraryEntry> {
+        val current = imageRepository.documentInfo().id
+        return documents().filter { it.info.id != current }
+    }
+
+    /** A new empty document in [store], with a free id (nothing is written until it gets pages). */
+    private fun newDocument(store: LibraryStore): DocumentMetadataV3 {
+        val now = clock()
+        repeat(MAX_ID_ATTEMPTS) {
+            val id = newDocumentId(now)
+            if (store.readMetadata(id) == null && !store.isForeign(id)) {
+                return DocumentMetadataV3(id = id, name = documentNamer(now), createdAt = now, updatedAt = now, pages = emptyList())
+            }
+        }
+        throw IllegalStateException("No free id")
     }
 
     // --- Private, to be called with the mutex held on the IO dispatcher ---

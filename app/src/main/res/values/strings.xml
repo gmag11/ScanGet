@@ -317,4 +317,36 @@
     <string name="library_share_cancel">Cancel sharing</string>
     <string name="settings_ocr_on_save">Recognize text when saving a scan</string>
     <string name="settings_ocr_on_save_summary">Done in the background, so PDFs are faster and documents can be searched by their text</string>
+    <!-- Document overview: page selection -->
+    <string name="page_selection_close">Close selection</string>
+    <string name="page_action_move">Move</string>
+    <string name="page_action_copy">Copy</string>
+    <plurals name="page_delete_title">
+        <item quantity="one">Delete %d page?</item>
+        <item quantity="other">Delete %d pages?</item>
+    </plurals>
+    <string name="page_delete_message">The pages and their original captures will be deleted.</string>
+    <string name="page_destination_move_title">Move to</string>
+    <string name="page_destination_copy_title">Copy to</string>
+    <string name="page_destination_new">New document</string>
+    <string name="page_destination_loading">Loading documents…</string>
+    <!-- %1$d: number of pages -->
+    <plurals name="page_destination_pages">
+        <item quantity="one">%1$d page</item>
+        <item quantity="other">%1$d pages</item>
+    </plurals>
+    <plurals name="page_transfer_deleted">
+        <item quantity="one">%d page deleted</item>
+        <item quantity="other">%d pages deleted</item>
+    </plurals>
+    <!-- %1$d: number of pages, %2$s: name of the document that received them -->
+    <plurals name="page_transfer_copied">
+        <item quantity="one">%1$d page copied to “%2$s”</item>
+        <item quantity="other">%1$d pages copied to “%2$s”</item>
+    </plurals>
+    <plurals name="page_transfer_moved">
+        <item quantity="one">%1$d page moved to “%2$s”</item>
+        <item quantity="other">%1$d pages moved to “%2$s”</item>
+    </plurals>
+    <string name="page_transfer_failed">The pages could not be moved or copied. Nothing was removed.</string>
 </resources>

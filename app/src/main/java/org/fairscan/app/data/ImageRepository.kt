@@ -540,13 +540,18 @@ class ImageRepository(
         saveMetadata()
     }
 
-    suspend fun delete(id: String) = mutex.withLock {
-        pages.delete(id)
+    suspend fun delete(id: String) = deletePages(listOf(id))
+
+    /** Removes several pages at once: the document is saved, and the library told, only once. */
+    suspend fun deletePages(ids: Collection<String>) = mutex.withLock {
+        ids.forEach { pages.delete(it) }
         saveMetadata()
-        sourceFile(id).delete()
-        processedDir.listFiles()
-            ?.filter { it.name.startsWith("$id.") || it.name.startsWith("$id-") }
-            ?.forEach { it.delete() }
+        val files = processedDir.listFiles()
+        for (id in ids) {
+            sourceFile(id).delete()
+            files?.filter { it.name.startsWith("$id.") || it.name.startsWith("$id-") }
+                ?.forEach { it.delete() }
+        }
         // No need to clean caches: stale entries will be evicted by LRU
     }
 

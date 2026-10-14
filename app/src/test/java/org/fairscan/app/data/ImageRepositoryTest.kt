@@ -138,6 +138,22 @@ class ImageRepositoryTest {
     }
 
     @Test
+    fun `deletePages removes several pages, keeps the others in order and deletes their files`() = runTest {
+        val repo = repo()
+        repeat(4) {
+            repo.add(jpeg(101, 102, 103), jpeg((50 + it).toByte()), metadata1, COLOR)
+            Thread.sleep(2) // page ids come from the clock
+        }
+        val ids = repo.imageIds()
+        assertThat(ids).hasSize(4)
+        repo.deletePages(listOf(ids[1], ids[3]))
+        assertThat(repo.imageIds()).containsExactly(ids[0], ids[2])
+        assertThat(jpegFiles(processedDir())).hasSize(2)
+        assertThat(jpegFiles(sourceDir())).hasSize(2)
+        assertThat(repo().imageIds()).containsExactly(ids[0], ids[2])
+    }
+
+    @Test
     fun delete_unknown_id() = runTest {
         val repo = repo()
         repo.delete("x")

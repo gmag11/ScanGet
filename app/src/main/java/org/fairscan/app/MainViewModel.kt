@@ -41,7 +41,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.fairscan.app.data.ImageRepository
 import org.fairscan.app.data.Logger
+import org.fairscan.app.data.DocumentInfo
+import org.fairscan.app.data.library.LibraryEntry
 import org.fairscan.app.data.library.LibraryRepository
+import org.fairscan.app.data.library.LibraryUnavailableException
 import org.fairscan.app.data.library.LibraryStatus
 import org.fairscan.app.domain.CapturedPage
 import org.fairscan.app.domain.Rotation
@@ -64,6 +67,8 @@ import org.fairscan.imageprocessing.ColorMode
 import org.fairscan.imageprocessing.ImageSize
 import org.fairscan.imageprocessing.Quad
 import kotlin.math.min
+
+private const val TAG = "MainViewModel"
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(
@@ -447,6 +452,70 @@ class MainViewModel(
         }
     }
 
+    // --- Page selection actions (document overview) ---
+
+    private val _pageTransfer = MutableStateFlow<PageTransferState>(PageTransferState.Idle)
+
+    /** What the page actions of the overview are doing, or have just done. */
+    val pageTransfer: StateFlow<PageTransferState> = _pageTransfer
+
+    /** The result of the last page action was shown. */
+    fun pageTransferShown() {
+        if (_pageTransfer.value !is PageTransferState.Running) _pageTransfer.value = PageTransferState.Idle
+    }
+
+    /** The saved documents other than the open one, to choose where to copy or move pages. */
+    suspend fun otherDocuments(): List<LibraryEntry> = library?.otherDocuments().orEmpty()
+
+    /** Removes the pages [ids] from the open document; without pages left, the document goes too. */
+    fun deletePages(ids: Set<String>) = runPageTransfer {
+        removePages(ids)
+        PageTransferState.Done(PageTransferState.Action.DELETED, ids.size, null)
+    }
+
+    /** Adds copies of the pages [ids] to the document [targetId], or to a new one if it is null. */
+    fun copyPages(ids: Set<String>, targetId: String?) = runPageTransfer {
+        val target = appendPagesTo(ids, targetId)
+        PageTransferState.Done(PageTransferState.Action.COPIED, ids.size, target.name)
+    }
+
+    /** Like [copyPages], and then removes the pages from the open document. */
+    fun movePages(ids: Set<String>, targetId: String?) = runPageTransfer {
+        val target = appendPagesTo(ids, targetId)
+        removePages(ids)
+        PageTransferState.Done(PageTransferState.Action.MOVED, ids.size, target.name)
+    }
+
+    private suspend fun appendPagesTo(ids: Set<String>, targetId: String?): DocumentInfo =
+        library?.appendPages(ids, targetId) ?: throw LibraryUnavailableException()
+
+    private suspend fun removePages(ids: Set<String>) {
+        val pages = withContext(Dispatchers.IO) {
+            imageRepository.deletePages(ids)
+            imageRepository.pages()
+        }
+        _pages.value = pages
+        if (pages.isEmpty()) {
+            deleteDocument(imageRepository.documentInfo().id)
+            navigateTo(Screen.Main.Library)
+        }
+    }
+
+    private fun runPageTransfer(action: suspend () -> PageTransferState) {
+        if (_pageTransfer.value is PageTransferState.Running) return
+        _pageTransfer.value = PageTransferState.Running
+        viewModelScope.launch {
+            _pageTransfer.value = try {
+                action()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logger.e(TAG, "Page action failed", e)
+                PageTransferState.Failed
+            }
+        }
+    }
+
     /** A page as a thumbnail big enough for the grid of the overview. */
     suspend fun gridThumbnail(key: PageViewKey): Bitmap? = withContext(Dispatchers.IO) {
         imageRepository.getGridThumbnail(key)?.toBitmap()
@@ -563,4 +632,14 @@ class MainViewModel(
         }
 
     }
+}
+
+/** The state of a delete, copy or move of pages started from the document overview. */
+sealed interface PageTransferState {
+    object Idle : PageTransferState
+    object Running : PageTransferState
+    object Failed : PageTransferState
+    enum class Action { DELETED, COPIED, MOVED }
+    /** [documentName] is the document that received the pages (null when they were deleted). */
+    data class Done(val action: Action, val count: Int, val documentName: String?) : PageTransferState
 }

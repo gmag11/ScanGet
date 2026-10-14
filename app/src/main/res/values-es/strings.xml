@@ -127,15 +127,9 @@
     <string name="library_setup_body">ScanGet guarda las fotos originales y tus ediciones, para que puedas editar y exportar tus documentos de nuevo en cualquier momento. Se quedan en tu teléfono aunque desinstales ScanGet.</string>
     <string name="library_setup_unavailable_title">ScanGet ya no puede abrir tu carpeta</string>
     <string name="library_setup_unavailable_body">La carpeta \"%1$s\" ya no es accesible. Elígela de nuevo o escoge otra. El documento en el que trabajas se conserva.</string>
-    <string name="library_folder_recommended">Recomendada</string>
-    <string name="library_folder_default_label">Almacenamiento interno › %1$s</string>
-    <string name="library_setup_access_explanation">Para crearla, FairScan pedirá acceso a tus archivos. Solo usa su propia carpeta.</string>
-    <string name="library_setup_use_default">Usar la carpeta %1$s</string>
-    <string name="library_setup_choose_other">Elegir otra carpeta</string>
     <string name="library_setup_choose_folder">Elegir una carpeta</string>
-    <string name="library_setup_choose_folder_hint">FairScan solo tendrá acceso a la carpeta que elijas.</string>
-    <string name="library_setup_permission_denied">Sin ese permiso FairScan no puede crear la carpeta. Elige una carpeta existente.</string>
-    <string name="library_folder_error">FairScan no ha podido usar esa carpeta. Elige otra.</string>
+    <string name="library_setup_choose_folder_hint">Elige una carpeta o crea una nueva en el selector. ScanGet solo tendrá acceso a esa carpeta. El selector no permite la raíz del almacenamiento ni Descargas: elige o crea una subcarpeta.</string>
+    <string name="library_folder_error">ScanGet no ha podido usar esa carpeta. Elige otra.</string>
     <string name="library_folder_working">Preparando la carpeta…</string>
     <string name="library_confirm_title">Esta carpeta ya existe</string>
     <string name="library_confirm_not_empty">\"%1$s\" no está vacía.</string>

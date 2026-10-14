@@ -82,7 +82,7 @@ class NavigationTest {
         assertThat(initial.navigateBack().current).isEqualTo(Camera)
     }
 
-    private val folder = LibraryLocation.Direct("/storage/emulated/0/FairScan")
+    private val folder = LibraryLocation.Saf("content://root/Scans", "Scans")
     private val atLibrary = NavigationState.initial(Library)
 
     @Test

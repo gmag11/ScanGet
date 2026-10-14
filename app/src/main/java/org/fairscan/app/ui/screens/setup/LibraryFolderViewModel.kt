@@ -45,10 +45,6 @@ data class MoveOffer(val candidate: LibraryLocation, val documentCount: Int, val
 data class LibraryFolderUiState(
     /** Null until the saved location has been read. */
     val status: LibraryStatus? = null,
-    val defaultFolderName: String = "",
-    /** The system's "All files access" can be asked for, so that FairScan creates its own folder. */
-    val allFilesAccessOffered: Boolean = true,
-    val permissionDenied: Boolean = false,
     val confirmation: FolderConfirmation? = null,
     val moveOffer: MoveOffer? = null,
     /** While moving documents (or setting the folder up). */
@@ -60,31 +56,22 @@ data class LibraryFolderUiState(
 )
 
 sealed interface LibraryFolderEvent {
-    /** Open the system screen where "All files access" is granted. */
-    data object RequestAllFilesAccess : LibraryFolderEvent
-
-    /** Open the system folder picker; [defaultFolderExists] tells where it should start. */
-    data class PickFolder(val defaultFolderExists: Boolean) : LibraryFolderEvent
+    /** Open the system folder picker, where the user chooses a folder or creates one. */
+    data object PickFolder : LibraryFolderEvent
 }
 
 /**
- * Choosing the folder of the library, at first launch and later from the settings: proposing the
- * `FairScan` folder or one picked by the user, telling what a non-empty folder holds before using
- * it, and moving the documents when the folder changes.
+ * Choosing the folder of the library, at first launch and later from the settings: the user picks
+ * or creates a folder in the system picker, is told what a non-empty folder holds before it is used,
+ * and is offered to move the documents when the folder changes.
  */
 class LibraryFolderViewModel(
     private val locations: LibraryLocations,
-    private val allFilesAccessOffered: Boolean,
     private val logger: Logger,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(
-        LibraryFolderUiState(
-            defaultFolderName = locations.defaultLocation().displayName,
-            allFilesAccessOffered = allFilesAccessOffered,
-        )
-    )
+    private val _state = MutableStateFlow(LibraryFolderUiState())
     val uiState: StateFlow<LibraryFolderUiState> = _state.asStateFlow()
 
     private val _events = MutableSharedFlow<LibraryFolderEvent>(
@@ -97,37 +84,15 @@ class LibraryFolderViewModel(
         }
     }
 
-    /** "Use the FairScan folder": asks for "All files access" if needed, then proposes the folder. */
-    fun onUseDefaultFolder() {
-        _state.update { it.copy(permissionDenied = false, hasError = false) }
-        when {
-            !allFilesAccessOffered -> onChooseFolder()
-            locations.hasAllFilesAccess() -> propose(locations.defaultLocation())
-            else -> _events.tryEmit(LibraryFolderEvent.RequestAllFilesAccess)
-        }
-    }
-
-    /** The user is back from the system screen where "All files access" is granted. */
-    fun onAllFilesAccessResult() {
-        if (locations.hasAllFilesAccess()) {
-            _state.update { it.copy(permissionDenied = false) }
-            propose(locations.defaultLocation())
-        } else {
-            _state.update { it.copy(permissionDenied = true) }
-        }
-    }
-
-    /** "Choose another folder": opens the system folder picker. */
+    /** "Choose a folder": opens the system folder picker. */
     fun onChooseFolder() {
-        viewModelScope.launch {
-            val exists = withContext(ioDispatcher) { locations.defaultFolderExists() }
-            _events.tryEmit(LibraryFolderEvent.PickFolder(exists))
-        }
+        _state.update { it.copy(hasError = false) }
+        _events.tryEmit(LibraryFolderEvent.PickFolder)
     }
 
     /** The picker returned a folder (its tree URI), for which the app already holds the permission. */
     fun onFolderPicked(uri: String) {
-        _state.update { it.copy(permissionDenied = false, hasError = false) }
+        _state.update { it.copy(hasError = false) }
         viewModelScope.launch {
             propose(withContext(ioDispatcher) { locations.named(LibraryLocation.Saf(uri, null)) })
         }

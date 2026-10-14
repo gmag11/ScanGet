@@ -72,11 +72,7 @@ import org.fairscan.app.ui.theme.FairScanTheme
 /** What the settings show and can do about the folder where the library is kept. */
 data class LibraryFolderSetting(
     val status: LibraryStatus?,
-    /** The `FairScan` folder can be proposed (it is created with "All files access"). */
-    val canUseDefaultFolder: Boolean,
-    val defaultFolderName: String,
     val onChooseFolderClick: () -> Unit,
-    val onUseDefaultFolderClick: () -> Unit,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -374,15 +370,6 @@ private fun LibraryFolderSection(library: LibraryFolderSetting) {
         folderLabelColor,
         onClick = library.onChooseFolderClick,
     )
-    val usingDefault = (library.status as? LibraryStatus.Ready)?.location is LibraryLocation.Direct
-    if (library.canUseDefaultFolder && !usingDefault) {
-        TextButton(
-            onClick = library.onUseDefaultFolderClick,
-            modifier = Modifier.padding(start = 4.dp),
-        ) {
-            Text(stringResource(R.string.library_setup_use_default, library.defaultFolderName))
-        }
-    }
 }
 
 @Composable
@@ -449,8 +436,7 @@ fun SettingsScreenPreviewWithLibraryFolder() {
     SettingsScreenPreview(
         SettingsUiState(),
         LibraryFolderSetting(
-            LibraryStatus.Ready(LibraryLocation.Saf("content://root/Scans", "Scans")),
-            canUseDefaultFolder = true, defaultFolderName = "FairScan", {}, {}),
+            LibraryStatus.Ready(LibraryLocation.Saf("content://root/Scans", "Scans")), {}),
     )
 }
 
@@ -460,8 +446,7 @@ fun SettingsScreenPreviewWithLibraryFolderLost() {
     SettingsScreenPreview(
         SettingsUiState(),
         LibraryFolderSetting(
-            LibraryStatus.Unavailable(LibraryLocation.Direct("/storage/emulated/0/FairScan")),
-            canUseDefaultFolder = true, defaultFolderName = "FairScan", {}, {}),
+            LibraryStatus.Unavailable(LibraryLocation.Saf("content://root/Scans", "Scans")), {}),
     )
 }
 

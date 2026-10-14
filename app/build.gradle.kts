@@ -54,16 +54,6 @@ android {
     namespace = "org.fairscan.app"
     compileSdk = 37
 
-    // "All files access" lets FairScan create its library folder (FairScan, at the root of the user's
-    // storage). Google Play only accepts it after a policy declaration: a build made with
-    // -Pfairscan.noAllFilesAccess leaves the permission out and only offers the system folder picker,
-    // which gives access to one folder.
-    val allFilesAccess = !project.hasProperty("fairscan.noAllFilesAccess")
-    if (allFilesAccess) {
-        sourceSets.getByName("debug").manifest.srcFile("src/allFilesAccess/AndroidManifest.xml")
-        sourceSets.getByName("release").manifest.srcFile("src/allFilesAccess/AndroidManifest.xml")
-    }
-
     defaultConfig {
         applicationId = "net.gmartin.scanget"
         // Based on tests against virtual devices, the app works with Android 8.0 (API level 26).
@@ -77,7 +67,6 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        buildConfigField("boolean", "ALL_FILES_ACCESS_AVAILABLE", allFilesAccess.toString())
     }
 
     // The key that signs the app. It is never in the repository: it is read from ../keys/key.properties

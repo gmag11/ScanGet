@@ -8,23 +8,31 @@ Lets the user choose where the document library is kept, a visible folder of the
 
 ### Requirement: Library outside the app's private storage
 Documents SHALL be stored only in a folder of the user's shared storage, never in the app's private
-storage: either the `FairScan` folder at the root of the user's storage, accessed with the "All files
-access" permission, or a folder chosen through the system folder picker. Data the app keeps
-privately SHALL only be caches that can be rebuilt from the library folder.
+storage: a folder chosen or created through the system folder picker, to which the app has access
+and to nothing else. The app SHALL NOT ask for "All files access", nor for any permission to keep
+the library.
+Data the app keeps privately SHALL only be caches that can be rebuilt from the library folder.
 
 #### Scenario: Uninstall
-- **WHEN** the user uninstalls FairScan
+- **WHEN** the user uninstalls the app
 - **THEN** every saved document remains in the library folder
+
+#### Scenario: No broad permission
+- **WHEN** the user sets up the library and uses the app
+- **THEN** no "All files access" or other permission is requested for the library, and the app can only reach the
+  folder the user chose
 
 ### Requirement: Folder setup at first launch
 When the app is launched normally and no library folder is set up, it SHALL show a setup screen
-before any other screen, proposing the folder `FairScan` at the root of the user's storage. Setup
-SHALL NOT be skippable. Once a folder is set up, the setup screen SHALL NOT be shown again unless the
-folder becomes unavailable.
+before any other screen, asking the user to choose an existing folder or create a new one with the
+system folder picker. No folder SHALL be proposed or chosen beforehand. Setup SHALL NOT be
+skippable. Once a folder is set up, the setup screen SHALL NOT be shown again unless the folder
+becomes unavailable.
 
 #### Scenario: First launch
-- **WHEN** the user opens FairScan for the first time
-- **THEN** the setup screen proposes "Internal storage › FairScan"
+- **WHEN** the user opens the app for the first time
+- **THEN** the setup screen explains that the user chooses or creates a folder for the documents and
+  that the app only gets access to that folder, and offers a button to open the folder picker
 
 #### Scenario: Update from a previous version
 - **WHEN** the app is updated from a version without a library and opened
@@ -32,33 +40,22 @@ folder becomes unavailable.
   folder
 
 #### Scenario: Scan to PDF
-- **WHEN** another app starts FairScan to get a PDF and no folder is set up
+- **WHEN** another app starts the app to get a PDF and no folder is set up
 - **THEN** the camera is shown without the setup screen
 
-### Requirement: Two ways to set up the folder
-The setup screen SHALL offer allowing "All files access", after which the app creates the `FairScan`
-folder if it does not exist and uses it, and choosing an existing folder with the system folder
-picker, which gives the app access to that folder only.
+### Requirement: Folder chosen with the picker
+The setup screen SHALL let the user open the system folder picker, in which the user can choose an
+existing folder or create a new one. The picker SHALL open at the root of the storage. The chosen
+folder SHALL be used after the confirmation if it is not empty, and the app SHALL only gain access
+to that folder.
 
-#### Scenario: All files access granted, folder missing
-- **WHEN** the user chooses to allow access, grants "All files access" and no `FairScan` folder exists
-- **THEN** the app creates `FairScan` at the root of the storage and uses it as the library folder
-
-#### Scenario: All files access granted, folder exists
-- **WHEN** the user grants "All files access" and a `FairScan` folder already exists at the root
-- **THEN** the app uses that folder, after the confirmation if it is not empty
-
-#### Scenario: All files access denied
-- **WHEN** the user returns from the system permission screen without granting access
-- **THEN** the setup screen is still shown and explains that an existing folder can be chosen instead
+#### Scenario: Create a folder
+- **WHEN** the user opens the picker, creates a folder with the picker's own button and confirms it
+- **THEN** that folder is used as the library folder
 
 #### Scenario: Existing folder
-- **WHEN** the user chooses an existing folder and picks it in the system picker
-- **THEN** that folder is used, after the confirmation if it is not empty, without "All files access"
-
-#### Scenario: Picker opens in FairScan
-- **WHEN** a `FairScan` folder exists at the root and the user chooses an existing folder
-- **THEN** the system folder picker opens inside `FairScan`
+- **WHEN** the user picks an existing folder
+- **THEN** that folder is used, after the confirmation if it is not empty
 
 #### Scenario: Empty folder
 - **WHEN** the selected folder is empty
@@ -68,9 +65,10 @@ picker, which gives the app access to that folder only.
 - **WHEN** the user cancels the picker
 - **THEN** the setup screen is still shown
 
-#### Scenario: Permission not offered
-- **WHEN** the app is built without the "All files access" permission
-- **THEN** the setup screen only offers choosing an existing folder
+#### Scenario: Folders the system does not allow
+- **WHEN** the user is in the root of the storage or in a protected folder such as Downloads
+- **THEN** the setup screen has told the user to choose or create a subfolder, as the picker does
+  not offer those
 
 ### Requirement: Confirmation for a non-empty folder
 Whenever the user picks a library folder that is not empty, at setup or later in the settings, the
@@ -103,7 +101,7 @@ editable and exportable, including documents created by another installation or 
 Incomplete or unreadable FairScan entries SHALL be ignored without affecting the others.
 
 #### Scenario: Reinstall
-- **WHEN** the app is reinstalled and the `FairScan` folder used before is confirmed
+- **WHEN** the app is reinstalled and the folder used before is picked and confirmed
 - **THEN** the documents saved there before are in the library and can be edited and exported
 
 #### Scenario: Corrupted entry
@@ -141,8 +139,8 @@ folders.
 - **THEN** the user's file is unchanged and the page keeps another name
 
 ### Requirement: Library folder setting
-The settings SHALL show the current library folder and let the user change it with the same two ways
-as the setup screen, with the same confirmation for non-empty folders.
+The settings SHALL show the current library folder and let the user change it with the system folder
+picker, with the same confirmation for non-empty folders as the setup screen.
 
 #### Scenario: Current location
 - **WHEN** the user opens the settings
@@ -188,12 +186,16 @@ the folder is not accessible, so that it can be chosen again or replaced. The op
 kept and SHALL be saved to the library as soon as a folder is accessible again.
 
 #### Scenario: Permission revoked
-- **WHEN** the access to the library folder is lost (folder access or "All files access" revoked) and
-  the app is opened
-- **THEN** the setup screen says the folder "FairScan" is no longer accessible and offers to choose
-  it again
+- **WHEN** the access to the library folder is lost (access to the folder revoked, or the folder
+  removed) and the app is opened
+- **THEN** the setup screen says the folder is no longer accessible and offers to choose it again
 
 #### Scenario: Edits kept
 - **WHEN** the user had unsaved edits when the folder became unavailable and then chooses the folder
   again
 - **THEN** the document in the folder contains those edits
+
+#### Scenario: Library saved by an earlier build as a path
+- **WHEN** the library was saved by an earlier build as a path of the storage, which needed "All
+  files access"
+- **THEN** the setup screen is shown, and choosing the same folder again brings its documents back

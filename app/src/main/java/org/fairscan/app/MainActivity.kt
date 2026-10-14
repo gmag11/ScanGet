@@ -20,9 +20,7 @@ import android.content.ClipData
 import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
-import android.provider.Settings
 import android.provider.DocumentsContract
-import android.os.Build
 import android.content.pm.PackageManager
 import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.net.Uri
@@ -40,7 +38,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -61,7 +58,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.fairscan.app.data.FileLogger
 import org.fairscan.app.data.ImageRepository
-import org.fairscan.app.data.library.DEFAULT_LIBRARY_FOLDER_NAME
 import org.fairscan.app.ui.Navigation
 import org.fairscan.app.ui.Screen
 import org.fairscan.app.ui.components.rememberCameraPermissionState
@@ -142,8 +138,7 @@ class MainActivity : ComponentActivity() {
         }
         val libraryFolderViewModel: LibraryFolderViewModel by viewModels {
             appContainer.viewModelFactory {
-                LibraryFolderViewModel(
-                    it.libraryLocations, BuildConfig.ALL_FILES_ACCESS_AVAILABLE, it.logger)
+                LibraryFolderViewModel(it.libraryLocations, it.logger)
             }
         }
         viewModel = viewModels<MainViewModel> {
@@ -304,7 +299,6 @@ class MainActivity : ComponentActivity() {
                         LibrarySetupScreen(
                             uiState = libraryFolderState,
                             navigation = navigation,
-                            onUseDefaultFolder = libraryFolderViewModel::onUseDefaultFolder,
                             onChooseFolder = libraryFolderViewModel::onChooseFolder,
                         )
                     }
@@ -442,8 +436,8 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * What the library folder flow needs from Android: the system folder picker, the system screen
-     * where "All files access" is granted, and the dialogs. It reacts to the events of [viewModel].
+     * What the library folder flow needs from Android: the system folder picker, in which the user
+     * chooses or creates the folder, and the dialogs. It reacts to the events of [viewModel].
      */
     @Composable
     private fun LibraryFolderHandling(viewModel: LibraryFolderViewModel, uiState: LibraryFolderUiState) {
@@ -460,29 +454,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        val allFilesAccessScreen = rememberLauncherForActivityResult(
-            ActivityResultContracts.StartActivityForResult()) { viewModel.onAllFilesAccessResult() }
-        val writePermission = rememberLauncherForActivityResult(
-            ActivityResultContracts.RequestPermission()) { viewModel.onAllFilesAccessResult() }
-
         LaunchedEffect(Unit) {
             viewModel.events.collect { event ->
                 when (event) {
-                    LibraryFolderEvent.RequestAllFilesAccess -> {
+                    LibraryFolderEvent.PickFolder -> {
                         try {
-                            if (SDK_INT >= Build.VERSION_CODES.R) {
-                                allFilesAccessScreen.launch(allFilesAccessIntent())
-                            } else {
-                                writePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                            }
-                        } catch (e: Exception) {
-                            logger.e("LibraryFolder", "Cannot ask for all files access", e)
-                            viewModel.onAllFilesAccessResult()
-                        }
-                    }
-                    is LibraryFolderEvent.PickFolder -> {
-                        try {
-                            pickFolder.launch(pickerInitialUri(event.defaultFolderExists))
+                            pickFolder.launch(pickerInitialUri())
                         } catch (e: Exception) {
                             val message = getString(R.string.error_file_picker_launch)
                             logger.e("LibraryFolder", message, e)
@@ -501,20 +478,9 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    @RequiresApi(Build.VERSION_CODES.R)
-    private fun allFilesAccessIntent(): Intent {
-        val appIntent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-            Uri.fromParts("package", packageName, null))
-        // A few devices only have the screen listing every app
-        return if (appIntent.resolveActivity(packageManager) != null) appIntent
-        else Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-    }
-
-    /** The picker starts in the FairScan folder if it exists, so that it only has to be confirmed. */
-    private fun pickerInitialUri(defaultFolderExists: Boolean): Uri =
-        DocumentsContract.buildDocumentUri(
-            "com.android.externalstorage.documents",
-            if (defaultFolderExists) "primary:$DEFAULT_LIBRARY_FOLDER_NAME" else "primary:")
+    /** The picker starts at the root of the storage: the user opens a folder there or creates one. */
+    private fun pickerInitialUri(): Uri =
+        DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:")
 
     private fun resolveLaunchMode(intent: Intent?): LaunchMode {
         return when (intent?.action) {
@@ -576,10 +542,7 @@ class MainActivity : ComponentActivity() {
             navigation = nav,
             library = LibraryFolderSetting(
                 status = libraryFolderState.status,
-                canUseDefaultFolder = libraryFolderState.allFilesAccessOffered,
-                defaultFolderName = libraryFolderState.defaultFolderName,
                 onChooseFolderClick = libraryFolderViewModel::onChooseFolder,
-                onUseDefaultFolderClick = libraryFolderViewModel::onUseDefaultFolder,
             ),
         )
     }
@@ -597,7 +560,7 @@ class MainActivity : ComponentActivity() {
                 when (event) {
                     is AboutEvent.CopyLogs -> {
                         clipboard.setClipEntry(
-                            ClipData.newPlainText("FairScan logs", event.logs).toClipEntry()
+                            ClipData.newPlainText("ScanGet logs", event.logs).toClipEntry()
                         )
                         showToast(msgCopiedLogs)
                     }

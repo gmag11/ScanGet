@@ -33,19 +33,12 @@ class LibraryLocationsTest {
         override suspend fun save(location: StoredLibraryLocation?) { stored = location }
     }
 
-    // A platform made of directories: folders reached "as paths" and "granted" ones are both
-    // directories of the temp folder; what the app is allowed to do is set by the test
+    // A platform made of directories: the "tree URI" of a folder is its path in the temp folder, and
+    // what the app is allowed to do with it is set by the test
     private inner class FakePlatform : LibraryPlatform {
-        var allFilesAccess = true
         val safPermissions = mutableSetOf<String>()
         val unreachable = mutableSetOf<String>()
         val released = mutableListOf<String>()
-        override fun hasAllFilesAccess() = allFilesAccess
-        override fun isFolderUsable(path: String) = File(path).isDirectory
-        override fun defaultFolderPath() = File(folder.root, "FairScan").path
-        override fun existingDirectStore(path: String) =
-            File(path).takeIf { it.isDirectory }?.let { FileLibraryStore(it) }
-        override fun directStore(path: String): LibraryStore { File(path).mkdirs(); return FileLibraryStore(File(path)) }
         override fun hasSafPermission(uri: String) = uri in safPermissions
         override fun isSafFolderReachable(uri: String) = uri !in unreachable && File(uri).isDirectory
         override fun safStore(uri: String) = FileLibraryStore(File(uri))
@@ -60,6 +53,11 @@ class LibraryLocationsTest {
         LibraryLocations(settings, platform, LibraryMover(), legacy)
 
     private fun dir(name: String) = File(folder.root, name).apply { mkdirs() }
+
+    // A folder the user picked: the app holds its permission
+    private fun picked(name: String): File = dir(name).also { platform.safPermissions += it.path }
+
+    private fun saf(dir: File, name: String? = null) = LibraryLocation.Saf(dir.path, name)
 
     private fun addDocument(store: LibraryStore, id: String, updatedAt: Long = 10) {
         store.writeSource(id, "100", byteArrayOf(1))
@@ -79,124 +77,82 @@ class LibraryLocationsTest {
     }
 
     @Test
-    fun `the default location is FairScan at the root of the storage`() {
-        assertThat(locations().defaultLocation()).isEqualTo(LibraryLocation.Direct(File(folder.root, "FairScan").path))
-        assertThat(locations().defaultLocation().displayName).isEqualTo("FairScan")
-    }
-
-    @Test
-    fun `choosing a location with all files access creates the folder and saves it`() = runTest {
+    fun `choosing a folder through the picker saves its uri and name`() = runTest {
+        val dir = picked("Scans")
         val l = locations(); l.load()
-        val target = l.defaultLocation()
-        assertThat(File(target.path)).doesNotExist()
 
-        val change = l.change(target, move = false)
+        val change = l.change(saf(dir), move = false)
 
         assertThat(change.notMoved).isEqualTo(0)
-        assertThat(File(target.path)).isDirectory()
-        assertThat(l.status.value).isEqualTo(LibraryStatus.Ready(target))
+        assertThat(l.status.value).isEqualTo(LibraryStatus.Ready(saf(dir, "Scans")))
         assertThat(l.currentStore()).isNotNull()
-        assertThat(settings.stored).isEqualTo(StoredLibraryLocation(StoredLibraryLocation.Kind.DIRECT, target.path))
-    }
-
-    @Test
-    fun `choosing a folder through the picker saves its uri and name`() = runTest {
-        val picked = dir("Scans")
-        platform.safPermissions += picked.path
-        val l = locations(); l.load()
-
-        l.change(LibraryLocation.Saf(picked.path, null), move = false)
-
-        assertThat(l.status.value).isEqualTo(LibraryStatus.Ready(LibraryLocation.Saf(picked.path, "Scans")))
-        assertThat(settings.stored).isEqualTo(
-            StoredLibraryLocation(StoredLibraryLocation.Kind.SAF, picked.path, "Scans"))
+        assertThat(settings.stored).isEqualTo(StoredLibraryLocation(dir.path, "Scans"))
     }
 
     @Test
     fun `the saved location is used at the next start`() = runTest {
-        val target = dir("FairScan")
-        settings.stored = StoredLibraryLocation(StoredLibraryLocation.Kind.DIRECT, target.path)
+        val dir = picked("Scans")
+        settings.stored = StoredLibraryLocation(dir.path, "Scans")
 
         val l = locations(); l.load()
 
-        assertThat(l.status.value).isEqualTo(LibraryStatus.Ready(LibraryLocation.Direct(target.path)))
+        assertThat(l.status.value).isEqualTo(LibraryStatus.Ready(saf(dir, "Scans")))
         assertThat(l.currentStore()).isNotNull()
     }
 
     @Test
     fun `inspecting a folder reads it and writes nothing`() = runTest {
-        val existing = dir("Scans")
+        val existing = picked("Scans")
         addDocument(FileLibraryStore(existing), "d1")
         File(existing, "photo.jpg").writeText("x")
-        val missing = File(folder.root, "Missing").path
-        platform.safPermissions += existing.path
+        val missing = File(folder.root, "Missing")
         val before = existing.walkTopDown().map { it.relativeTo(folder.root).path }.sorted().toList()
         val l = locations(); l.load()
 
-        assertThat(l.inspect(LibraryLocation.Saf(existing.path, null)))
-            .isEqualTo(FolderInspection(fairScanDocuments = 1, otherItems = 1))
-        assertThat(l.inspect(LibraryLocation.Direct(existing.path)))
-            .isEqualTo(FolderInspection(fairScanDocuments = 1, otherItems = 1))
-        assertThat(l.inspect(LibraryLocation.Direct(missing))).isEqualTo(FolderInspection(0, 0))
+        assertThat(l.inspect(saf(existing))).isEqualTo(FolderInspection(fairScanDocuments = 1, otherItems = 1))
+        assertThat(l.inspect(saf(missing))).isEqualTo(FolderInspection(0, 0))
 
-        assertThat(File(missing)).doesNotExist() // not created by looking at it
+        assertThat(missing).doesNotExist() // not created by looking at it
         assertThat(existing.walkTopDown().map { it.relativeTo(folder.root).path }.sorted().toList()).isEqualTo(before)
     }
 
     @Test
     fun `a folder that disappears makes the library unavailable and it comes back with it`() = runTest {
-        val target = dir("FairScan")
-        settings.stored = StoredLibraryLocation(StoredLibraryLocation.Kind.DIRECT, target.path)
+        val dir = picked("Scans")
+        settings.stored = StoredLibraryLocation(dir.path, "Scans")
         val l = locations(); l.load()
-        val location = LibraryLocation.Direct(target.path)
+        val location = saf(dir, "Scans")
         assertThat(l.currentStore()).isNotNull()
 
-        target.deleteRecursively()
+        dir.deleteRecursively()
+        l.refresh()
         assertThat(l.currentStore()).isNull()
         assertThat(l.status.value).isEqualTo(LibraryStatus.Unavailable(location))
 
-        dir("FairScan")
+        dir("Scans")
         l.refresh()
         assertThat(l.status.value).isEqualTo(LibraryStatus.Ready(location))
         assertThat(l.currentStore()).isNotNull()
     }
 
     @Test
-    fun `revoking all files access makes a direct location unavailable`() = runTest {
-        val target = dir("FairScan")
-        settings.stored = StoredLibraryLocation(StoredLibraryLocation.Kind.DIRECT, target.path)
-        val l = locations(); l.load()
-
-        platform.allFilesAccess = false
-        assertThat(l.currentStore()).isNull()
-        l.refresh()
-        assertThat(l.status.value).isInstanceOf(LibraryStatus.Unavailable::class.java)
-
-        platform.allFilesAccess = true
-        l.refresh()
-        assertThat(l.status.value).isInstanceOf(LibraryStatus.Ready::class.java)
-    }
-
-    @Test
     fun `losing the permission of a picked folder makes it unavailable`() = runTest {
-        val picked = dir("Scans")
-        platform.safPermissions += picked.path
-        settings.stored = StoredLibraryLocation(StoredLibraryLocation.Kind.SAF, picked.path, "Scans")
+        val dir = picked("Scans")
+        settings.stored = StoredLibraryLocation(dir.path, "Scans")
         val l = locations(); l.load()
         assertThat(l.currentStore()).isNotNull()
 
-        platform.safPermissions -= picked.path
+        platform.safPermissions -= dir.path
 
         assertThat(l.currentStore()).isNull()
-        assertThat(l.status.value).isEqualTo(LibraryStatus.Unavailable(LibraryLocation.Saf(picked.path, "Scans")))
+        assertThat(l.status.value).isEqualTo(LibraryStatus.Unavailable(saf(dir, "Scans")))
     }
 
     @Test
     fun `a picked folder that cannot be reached is unavailable at load`() = runTest {
-        val picked = dir("Scans")
-        platform.safPermissions += picked.path
-        platform.unreachable += picked.path
-        settings.stored = StoredLibraryLocation(StoredLibraryLocation.Kind.SAF, picked.path, "Scans")
+        val dir = picked("Scans")
+        platform.unreachable += dir.path
+        settings.stored = StoredLibraryLocation(dir.path, "Scans")
 
         val l = locations(); l.load()
 
@@ -205,32 +161,32 @@ class LibraryLocationsTest {
 
     @Test
     fun `changing the folder can move the documents`() = runTest {
-        val oldDir = dir("Old"); val newDir = dir("New")
+        val oldDir = picked("Old"); val newDir = picked("New")
         addDocument(FileLibraryStore(oldDir), "d1"); addDocument(FileLibraryStore(oldDir), "d2")
         File(oldDir, "photo.jpg").writeText("mine")
-        settings.stored = StoredLibraryLocation(StoredLibraryLocation.Kind.DIRECT, oldDir.path)
+        settings.stored = StoredLibraryLocation(oldDir.path, "Old")
         val l = locations(); l.load()
         val progress = mutableListOf<MoveProgress>()
 
-        val change = l.change(LibraryLocation.Direct(newDir.path), move = true) { progress += it }
+        val change = l.change(saf(newDir), move = true) { progress += it }
 
         assertThat(change.notMoved).isEqualTo(0)
         assertThat(FileLibraryStore(newDir).list().map { it.info.id }).containsExactlyInAnyOrder("d1", "d2")
         assertThat(FileLibraryStore(oldDir).list()).isEmpty()
         assertThat(File(oldDir, "photo.jpg").readText()).isEqualTo("mine")
         assertThat(progress.last()).isEqualTo(MoveProgress(2, 2))
-        assertThat(l.status.value).isEqualTo(LibraryStatus.Ready(LibraryLocation.Direct(newDir.path)))
-        assertThat(settings.stored!!.value).isEqualTo(newDir.path)
+        assertThat(l.status.value).isEqualTo(LibraryStatus.Ready(saf(newDir, "New")))
+        assertThat(settings.stored!!.uri).isEqualTo(newDir.path)
     }
 
     @Test
     fun `changing the folder without moving leaves the documents where they are`() = runTest {
-        val oldDir = dir("Old"); val newDir = dir("New")
+        val oldDir = picked("Old"); val newDir = picked("New")
         addDocument(FileLibraryStore(oldDir), "d1")
-        settings.stored = StoredLibraryLocation(StoredLibraryLocation.Kind.DIRECT, oldDir.path)
+        settings.stored = StoredLibraryLocation(oldDir.path, "Old")
         val l = locations(); l.load()
 
-        l.change(LibraryLocation.Direct(newDir.path), move = false)
+        l.change(saf(newDir), move = false)
 
         assertThat(FileLibraryStore(oldDir).list().map { it.info.id }).containsExactly("d1")
         assertThat(FileLibraryStore(newDir).list()).isEmpty()
@@ -239,37 +195,34 @@ class LibraryLocationsTest {
 
     @Test
     fun `documents already in the new folder are in the library`() = runTest {
-        val newDir = dir("New")
+        val newDir = picked("New")
         addDocument(FileLibraryStore(newDir), "old-install")
         val l = locations(); l.load()
 
-        l.change(LibraryLocation.Direct(newDir.path), move = false)
+        l.change(saf(newDir), move = false)
 
         assertThat(l.currentStore()!!.list().map { it.info.id }).containsExactly("old-install")
     }
 
     @Test
     fun `the previous picked folder is released when the library goes elsewhere`() = runTest {
-        val picked = dir("Picked"); val other = dir("Other")
-        platform.safPermissions += picked.path
-        settings.stored = StoredLibraryLocation(StoredLibraryLocation.Kind.SAF, picked.path, "Picked")
+        val first = picked("Picked"); val other = picked("Other")
+        settings.stored = StoredLibraryLocation(first.path, "Picked")
         val l = locations(); l.load()
 
-        l.change(LibraryLocation.Direct(other.path), move = false)
+        l.change(saf(other), move = false)
 
-        assertThat(platform.released).containsExactly(picked.path)
+        assertThat(platform.released).containsExactly(first.path)
     }
 
     @Test
     fun `a rejected candidate is released but the folder in use is not`() = runTest {
-        val picked = dir("Picked"); val candidate = dir("Candidate")
-        platform.safPermissions += picked.path; platform.safPermissions += candidate.path
-        settings.stored = StoredLibraryLocation(StoredLibraryLocation.Kind.SAF, picked.path, "Picked")
+        val inUse = picked("Picked"); val candidate = picked("Candidate")
+        settings.stored = StoredLibraryLocation(inUse.path, "Picked")
         val l = locations(); l.load()
 
-        l.discard(LibraryLocation.Saf(candidate.path, null))
-        l.discard(LibraryLocation.Saf(picked.path, "Picked"))
-        l.discard(LibraryLocation.Direct("/anywhere"))
+        l.discard(saf(candidate))
+        l.discard(saf(inUse, "Picked"))
 
         assertThat(platform.released).containsExactly(candidate.path)
     }
@@ -278,9 +231,10 @@ class LibraryLocationsTest {
     fun `documents left in app storage by development builds are moved into the library`() = runTest {
         val legacy = dir("legacy-library")
         addDocument(FileLibraryStore(legacy), "dev1")
+        val target = picked("Scans")
         val l = locations(listOf(legacy)); l.load()
 
-        l.change(l.defaultLocation(), move = false)
+        l.change(saf(target), move = false)
 
         assertThat(l.currentStore()!!.list().map { it.info.id }).containsExactly("dev1")
         assertThat(legacy).doesNotExist()

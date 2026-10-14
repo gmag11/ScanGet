@@ -249,17 +249,9 @@
     <string name="library_setup_unavailable_title">ScanGet can no longer open your folder</string>
     <!-- %1$s: folder name -->
     <string name="library_setup_unavailable_body">The folder \"%1$s\" is not accessible any more. Choose it again or pick another one. The document you are working on is kept.</string>
-    <string name="library_folder_recommended">Recommended</string>
-    <!-- %1$s: folder name -->
-    <string name="library_folder_default_label">Internal storage › %1$s</string>
-    <string name="library_setup_access_explanation">To create it, FairScan will ask for access to your files. It only uses its own folder.</string>
-    <!-- %1$s: folder name -->
-    <string name="library_setup_use_default">Use the %1$s folder</string>
-    <string name="library_setup_choose_other">Choose another folder</string>
     <string name="library_setup_choose_folder">Choose a folder</string>
-    <string name="library_setup_choose_folder_hint">FairScan will only have access to the folder you choose.</string>
-    <string name="library_setup_permission_denied">Without that permission FairScan cannot create the folder. Choose an existing folder instead.</string>
-    <string name="library_folder_error">FairScan could not use that folder. Choose another one.</string>
+    <string name="library_setup_choose_folder_hint">Choose a folder or create a new one in the picker. ScanGet will only have access to that folder. The picker does not allow the root of the storage or Downloads: choose or create a subfolder.</string>
+    <string name="library_folder_error">ScanGet could not use that folder. Choose another one.</string>
     <string name="library_folder_working">Setting up the folder…</string>
     <!-- Confirmation shown when the chosen library folder is not empty. %1$s: folder name -->
     <string name="library_confirm_title">This folder already exists</string>

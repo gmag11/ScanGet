@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -48,6 +50,9 @@ import java.util.Date
 import java.util.Collections.synchronizedMap
 
 const val SOURCE_DIR_NAME = "sources"
+
+/** How many pages are rendered from their original capture at the same time. */
+const val MAX_PARALLEL_RENDERS = 2
 const val PROCESSED_DIR_NAME = "scanned_pages"
 
 // Processed files made with non-neutral adjustments end with ".a<hash>.jpg" or ".png".
@@ -68,7 +73,19 @@ class ImageRepository(
     // Default name of a document created or migrated at the given time (epoch millis)
     private val documentNamer: (Long) -> String = { DefaultFilenameStyle.SCAN_DATE_TIME.filename(Date(it)) },
     private val clock: () -> Long = System::currentTimeMillis,
+    // Receives a line with the time of a stage of making a thumbnail (debug builds only)
+    private val trace: (String) -> Unit = {},
+    // Where thumbnails are kept between sessions; without it they are only kept in memory
+    private val thumbnailDiskCache: ThumbnailCache? = null,
 ) {
+    /**
+     * Where an already rendered page can be found when its processed file is not in the working
+     * directory (the library keeps one for each page): the page as [image] returns it for exactly
+     * that [PageViewKey], or null. Used before rendering the page again from its original capture.
+     */
+    @Volatile
+    var storedProcessed: (suspend (PageViewKey) -> EncodedImage?)? = null
+
     private val sourceDir = File(scanRootDir, SOURCE_DIR_NAME).apply { mkdirs() }
     private val processedDir = File(scanRootDir, PROCESSED_DIR_NAME).apply { mkdirs() }
     private val thumbnailDir = File(scanRootDir, THUMBNAIL_DIR_NAME)
@@ -82,6 +99,9 @@ class ImageRepository(
     private var pages: PageStore = PageStore(loaded.pages)
 
     private val processingJobs = synchronizedMap(mutableMapOf<PageViewKey, Deferred<Unit>>())
+    // Rendering a page from its original capture is heavy (a full-size photo in memory, all the
+    // processors busy): a document of many pages is rendered a few at a time, not all at once
+    private val renderPermits = Semaphore(MAX_PARALLEL_RENDERS)
     private val imageCache = createLruCache<PageViewKey, Deferred<EncodedImage?>>(maxEntries = 50)
     private val thumbnailCache = createLruCache<PageViewKey, Deferred<EncodedImage?>>(maxEntries = 1000)
     // Bigger thumbnails, for the grid of the document overview: fewer of them are shown at once
@@ -296,15 +316,17 @@ class ImageRepository(
         val job = processingJobs.computeIfAbsent(key) {
             scope.async(Dispatchers.IO) {
                 if (!processedFile.exists()) {
-                    val sourceJpeg = Jpeg(sourceFile(key.pageId).readBytes())
-                    val processedJpeg =
-                        transformations.process(
-                            sourceJpeg,
-                            metadata = metadata,
-                            colorMode = colorMode,
-                            adjustments = key.adjustments,
-                        )
-                    processedFile.writeBytes(processedJpeg.bytes)
+                    renderPermits.withPermit {
+                        val sourceJpeg = Jpeg(sourceFile(key.pageId).readBytes())
+                        val processedJpeg =
+                            transformations.process(
+                                sourceJpeg,
+                                metadata = metadata,
+                                colorMode = colorMode,
+                                adjustments = key.adjustments,
+                            )
+                        processedFile.writeBytes(processedJpeg.bytes)
+                    }
                 }
             }
         }
@@ -321,6 +343,15 @@ class ImageRepository(
      * and adjustments. Returns false when it cannot be, e.g. [key] is not the page's current rendering.
      */
     private suspend fun renderFromSource(key: PageViewKey): Boolean {
+        val started = System.nanoTime()
+        try {
+            return renderFromSourceTimed(key)
+        } finally {
+            trace("render-from-source page=${key.pageId} ${(System.nanoTime() - started) / 1_000_000} ms")
+        }
+    }
+
+    private suspend fun renderFromSourceTimed(key: PageViewKey): Boolean {
         val page = mutex.withLock { pages.get(key.pageId) } ?: return false
         val metadata = page.toMetadata() ?: return false
         val isCurrent = key.colorMode == page.colorMode &&
@@ -360,12 +391,26 @@ class ImageRepository(
     suspend fun image(key: PageViewKey): EncodedImage? =
         getOrCompute(imageCache, key, ::computeProcessedImage)
 
+    /**
+     * The processed image of [key] if it is at hand (in memory or in the working directory), without
+     * rendering the page from its original capture: null if that would be needed.
+     */
+    suspend fun imageIfRendered(key: PageViewKey): EncodedImage? {
+        val cached = imageCache[key]
+        if (cached?.isCompleted != true && !processedImageFile(key).exists()) return null
+        return image(key)
+    }
+
     suspend fun getThumbnail(key: PageViewKey): EncodedImage? =
         getOrCompute(thumbnailCache, key, ::computeThumbnail)
 
     /** The page as a thumbnail big enough for the grid of the document overview. */
-    suspend fun getGridThumbnail(key: PageViewKey): EncodedImage? =
-        getOrCompute(gridThumbnailCache, key, ::computeGridThumbnail)
+    suspend fun getGridThumbnail(key: PageViewKey): EncodedImage? {
+        val started = System.nanoTime()
+        val thumbnail = getOrCompute(gridThumbnailCache, key, ::computeGridThumbnail)
+        trace("grid-thumbnail page=${key.pageId} total ${(System.nanoTime() - started) / 1_000_000} ms")
+        return thumbnail
+    }
 
     // --- Cache compute functions ---
 
@@ -388,7 +433,15 @@ class ImageRepository(
     private suspend fun computeProcessedImage(key: PageViewKey): EncodedImage? =
         withContext(Dispatchers.IO) {
             val baseFile = processedImageFile(key)
-            if (!baseFile.exists() && !renderFromSource(key)) return@withContext null
+            if (!baseFile.exists()) {
+                val started = System.nanoTime()
+                // Already rotated for this key, as it is returned: nothing else to do
+                storedProcessed?.invoke(key)?.let {
+                    trace("stored-processed page=${key.pageId} ${(System.nanoTime() - started) / 1_000_000} ms")
+                    return@withContext it
+                }
+                if (!renderFromSource(key)) return@withContext null
+            }
             val bytes = baseFile.readBytes()
             val baseImage = if (baseFile.extension == "png") Png(bytes) else Jpeg(bytes)
             if (key.rotation == Rotation.R0) {
@@ -401,20 +454,43 @@ class ImageRepository(
         }
 
     private suspend fun computeThumbnail(key: PageViewKey): EncodedImage? =
-        computeResized(key) { transformations.resizeToThumbnail(it) }
+        keptOrComputed(key, ThumbnailKind.STRIP) { transformations.resizeToThumbnail(it) }
 
     private suspend fun computeGridThumbnail(key: PageViewKey): EncodedImage? =
-        computeResized(key) { transformations.resizeToGridThumbnail(it) }
+        keptOrComputed(key, ThumbnailKind.GRID) { transformations.resizeToGridThumbnail(it) }
+
+    // The thumbnail kept on disk for this rendering of the page if there is one; otherwise it is made
+    // from the processed image and kept for the next time
+    private suspend fun keptOrComputed(
+        key: PageViewKey,
+        kind: ThumbnailKind,
+        resize: (EncodedImage) -> EncodedImage,
+    ): EncodedImage? = withContext(Dispatchers.IO) {
+        val cache = thumbnailDiskCache ?: return@withContext computeResized(key, resize)
+        val renderKey = key.renderKey()
+        val started = System.nanoTime()
+        cache.read(key.pageId, renderKey, kind)?.let {
+            trace("thumbnail-from-disk page=${key.pageId} ${kind.code} ${(System.nanoTime() - started) / 1_000_000} ms")
+            return@withContext it
+        }
+        computeResized(key, resize)?.also { cache.write(key.pageId, renderKey, kind, it) }
+    }
 
     private suspend fun computeResized(
         key: PageViewKey,
         resize: (EncodedImage) -> EncodedImage,
     ): EncodedImage? =
         withContext(Dispatchers.IO) {
+            val started = System.nanoTime()
             val processed = getOrCompute(imageCache, key, ::computeProcessedImage)
                 ?: return@withContext null
+            val ready = System.nanoTime()
             try {
-                resize(processed)
+                resize(processed).also {
+                    trace("thumbnail page=${key.pageId} processed ${(ready - started) / 1_000_000} ms, " +
+                        "decode+resize+encode ${(System.nanoTime() - ready) / 1_000_000} ms " +
+                        "(${processed.bytes.size / 1024} KB in, ${it.bytes.size / 1024} KB out)")
+                }
             } catch (e: Exception) {
                 val message = "Failed to compute thumbnail for ${key.pageId}"
                 logger.e("ImageRepository", message, e)
@@ -476,6 +552,7 @@ class ImageRepository(
 
     // Clearing starts a new document, with a new identity
     suspend fun clear() = mutex.withLock {
+        storedProcessed = null // what the library held was for the document that is gone
         info = newDocumentInfo()
         clearFiles()
         saveMetadata()

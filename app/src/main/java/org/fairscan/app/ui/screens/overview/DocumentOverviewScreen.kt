@@ -32,7 +32,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -209,12 +208,12 @@ private fun PageGrid(
         onPageReorder(document.pages[from.index].key.pageId, to.index)
     }
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(150.dp),
+        columns = PageGridCells,
         state = gridState,
         modifier = modifier.background(MaterialTheme.colorScheme.surfaceContainerLow),
         contentPadding = PaddingValues(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(PAGE_GRID_GAP_DP.dp),
+        verticalArrangement = Arrangement.spacedBy(PAGE_GRID_GAP_DP.dp),
     ) {
         itemsIndexed(document.pages, key = { _, page -> page.key.pageId }) { index, page ->
             ReorderableItem(reorderState, key = page.key.pageId) { isDragging ->
@@ -251,21 +250,26 @@ private fun PageCell(
             if (isDragging) 2.dp else 1.dp,
             if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
     ) {
-        Box(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+        // The cell is a square whatever the page: the thumbnail is fitted inside it, whole and centered,
+        // and until it is ready the cell is already its final size
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
             val image = bitmap
             if (image != null) {
                 Image(
                     bitmap = image.asImageBitmap(),
                     contentDescription = "$number",
-                    contentScale = ContentScale.FillWidth,
-                    modifier = Modifier.fillMaxWidth(),
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
                 )
-            } else {
-                // Until the thumbnail is ready the cell has the shape of a page
-                Box(Modifier.fillMaxWidth().aspectRatio(3f / 4f)
-                    .background(MaterialTheme.colorScheme.surfaceVariant))
             }
-            PageNumberBadge(number)
+            PageNumberBadge(number, Alignment.BottomStart)
         }
     }
 }
@@ -313,6 +317,12 @@ private fun OverviewPreview(pages: Int, name: String = "Invoice March") {
 @Composable
 fun DocumentOverviewScreenPreview() {
     OverviewPreview(pages = 7)
+}
+
+@Preview(showBackground = true, widthDp = 900, heightDp = 600)
+@Composable
+fun DocumentOverviewScreenTabletPreview() {
+    OverviewPreview(pages = 14)
 }
 
 @Preview(showBackground = true)

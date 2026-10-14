@@ -131,23 +131,30 @@ class MainViewModel(
     val loadingPageIds: StateFlow<Set<String>> = _loadingPageIds
     private val currentPageUiState: Flow<CurrentPageUiState?> =
         combine(_currentPageIndex, _pages, _loadingPageIds) { index, pages, loadingIds ->
-            val page = pages.getOrNull(index)
-            Pair(page, loadingIds)
+            Triple(pages, index, loadingIds)
         }
-            .mapLatest { (page, loadingIds) ->
-                page?.let {
+            .mapLatest { (pages, index, loadingIds) ->
+                pages.getOrNull(index)?.let {
                     val isLoading = it.id in loadingIds
-                    val canBeCropped = page.metadata != null
-                    val bitmap = try {
-                         imageRepository.image(it.key())?.toBitmap()
-                    } catch (e: Exception) {
-                        logger.e("MainViewModel", "Failed to load image for ${it.id}", e)
-                        null
-                    }
-                    CurrentPageUiState(it.key(), bitmap, it.colorMode, canBeCropped, isLoading)
+                    val canBeCropped = it.metadata != null
+                    val bitmap = loadBitmap(it)
+                    // The neighbours are loaded too, so they are already there when the user swipes
+                    CurrentPageUiState(
+                        it.key(), bitmap, it.colorMode, canBeCropped, isLoading,
+                        index = index,
+                        previousBitmap = pages.getOrNull(index - 1)?.let { loadBitmap(it) },
+                        nextBitmap = pages.getOrNull(index + 1)?.let { loadBitmap(it) },
+                    )
                 }
             }
             .flowOn(Dispatchers.IO)
+
+    private suspend fun loadBitmap(page: ScanPage): Bitmap? = try {
+        imageRepository.image(page.key())?.toBitmap()
+    } catch (e: Exception) {
+        logger.e("MainViewModel", "Failed to load image for ${page.id}", e)
+        null
+    }
 
     val documentUiState: StateFlow<DocumentUiState> =
         combine(_currentPageIndex, currentPageUiState, documentUiModel) { index, page, document ->

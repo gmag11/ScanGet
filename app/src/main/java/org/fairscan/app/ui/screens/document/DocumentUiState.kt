@@ -31,4 +31,8 @@ data class CurrentPageUiState(
     val colorMode: ColorMode?,
     val canBeCropped: Boolean = false,
     val isLoading: Boolean = false,
+    /** Index of the page this state was made for; the neighbours are the pages around it. */
+    val index: Int = 0,
+    val previousBitmap: Bitmap? = null,
+    val nextBitmap: Bitmap? = null,
 )

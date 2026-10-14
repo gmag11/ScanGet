@@ -91,7 +91,6 @@
     <string name="settings_default_filename">Noklusējuma faila nosaukums</string>
     <string name="settings_ocr_download_error">Neizdevās lejupielādēt. Pārbaudiet savu interneta savienojumu un pārliecinieties, ka šai lietotnei ir tīkla piekļuves atļauja.</string>
     <string name="settings_ocr_suggested">Iesaka</string>
-    <string name="app_tagline">Vienkārša un cieņpilna lietotne, kas veic jūsu dokumentu skenējumus.</string>
     <string name="color_mode">Krāsu filtrs</string>
     <string name="color_mode_default">Noklusējuma krāsu filtrs</string>
     <string name="color_mode_grayscale">Pelēktoņu</string>

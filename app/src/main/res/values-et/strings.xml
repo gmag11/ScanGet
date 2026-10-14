@@ -2,7 +2,6 @@
 <resources>
     <string name="about">Rakenduse teave</string>
     <string name="add_page">Lisa leht</string>
-    <string name="app_tagline">Lihtsaltkasutatav ja viisakas rakendus dokumentide skaneerimiseks.</string>
     <string name="apply">Rakenda</string>
     <string name="back">Tagasi</string>
     <string name="black_and_white_jpeg_hint">Must-valged leheküljed oleksid PDF-ina eksportides väiksemad ja teravamad.</string>

@@ -1,7 +1,6 @@
 <resources>
     <string name="about">Om</string>
     <string name="add_page">Lägg till sida</string>
-    <string name="app_tagline">En enkel och respektfull app för att skanna dina dokument.</string>
     <string name="apply">Använd</string>
     <string name="back">Tillbaka</string>
     <string name="black_and_white_jpeg_hint">Svartvita sidor skulle bli mindre och skarpare om de exporterades som PDF.</string>

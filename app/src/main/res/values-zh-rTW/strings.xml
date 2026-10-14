@@ -1,7 +1,6 @@
 <resources>
     <string name="about">關於</string>
     <string name="add_page">新增頁面</string>
-    <string name="app_tagline">一個簡單且尊重隱私的文件掃描應用程式。</string>
     <string name="apply">套用</string>
     <string name="back">返回</string>
     <string name="black_and_white_jpeg_hint">黑白頁面匯出為 PDF 時更小、更清晰。</string>

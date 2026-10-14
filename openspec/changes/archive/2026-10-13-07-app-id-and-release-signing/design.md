@@ -54,6 +54,12 @@ authority from `context.packageName`, so both follow the id. The only other ment
   Gradle code, the file is outside the git root, and the build prints only which source it used
   ("Signing with ../keys/key.properties"). The existing `.gitignore` does not need an entry because
   the folder is not inside the project.
+- **About screen:** the developer name, the e-mail (`EMAIL_ADDRESS`, one constant used for the
+  contact and the support e-mails) and the repository URL are changed in `AboutScreen.kt` and
+  `Emails.kt`; the website row stays as a link row, now to the repository. The tagline is a string
+  (`app_tagline`) in English and Spanish; the other translations keep the old text until they are
+  translated, so those would still show the old tagline: the translations of `app_tagline` are
+  removed so that they fall back to the new English text. License and libraries are untouched.
 - **ABI split APKs** are named `ScanGet-<version>-<abi>.apk` (the one line that builds the name).
   Anything that referred to the old file name (scripts, notes) is updated.
 

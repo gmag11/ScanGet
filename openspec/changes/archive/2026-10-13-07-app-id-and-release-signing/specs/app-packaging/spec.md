@@ -2,8 +2,8 @@
 
 ### Requirement: App name
 The app SHALL call itself ScanGet: in the launcher, in the system lists of apps and in its own
-texts that speak of the app by its name. Texts that credit or link to the upstream FairScan project
-SHALL keep naming it. The default library folder name and the public intent action SHALL NOT change.
+texts that speak of the app by its name. The default library folder name and the public intent
+action SHALL NOT change.
 
 #### Scenario: Launcher
 - **WHEN** the app is installed
@@ -13,13 +13,34 @@ SHALL keep naming it. The default library folder name and the public intent acti
 - **WHEN** the library setup screen asks where the app should keep the documents
 - **THEN** it speaks of ScanGet, in English and in Spanish
 
-#### Scenario: Upstream credits
-- **WHEN** the user opens the About screen
-- **THEN** the credits and links to the upstream FairScan project still name it
-
 #### Scenario: Library folder
 - **WHEN** the library folder is offered for the first time
 - **THEN** its default name is still `FairScan`, so that documents already saved there are found
+
+### Requirement: About screen data
+The About screen SHALL show the app as ScanGet with a tagline that says everything stays on the
+device, the developer "Germán Martín", the contact e-mail `github@gmartin.net` and the repository
+`https://github.com/gmag11/scanget`. The e-mails for contact and support (with the last image)
+SHALL be addressed to that e-mail and carry the app name and version in their subject. The license
+section (GNU GPL v3) and the list of libraries SHALL stay.
+
+#### Scenario: Data shown
+- **WHEN** the user opens the About screen
+- **THEN** it shows ScanGet, the tagline, the developer, the e-mail and the repository link, in
+  English and in Spanish
+
+#### Scenario: Contact
+- **WHEN** the user taps the e-mail
+- **THEN** a new e-mail to `github@gmartin.net` is started
+
+#### Scenario: Support e-mail
+- **WHEN** the user sends the last image to support
+- **THEN** the e-mail is addressed to `github@gmartin.net` and its subject starts with "ScanGet" and
+  the version
+
+#### Scenario: License
+- **WHEN** the user opens the license
+- **THEN** the full GPL v3 text is shown, as before
 
 ### Requirement: Application id
 The app SHALL be installed with the application id `net.gmartin.scanget`, so that it can be

@@ -20,14 +20,14 @@
     <!-- Button in the Document screen -->
     <string name="add_page">Add page</string>
     <!-- Header in the About screen -->
-    <string name="app_name" translatable="false">FairScan</string>
+    <string name="app_name" translatable="false">ScanGet</string>
     <!--
     Appears in the About screen.
     "Simple" means easy to use, with no unnecessary complexity. You can scan a document and get a PDF in just a few seconds.
     "Respectful" is not only about privacy, but also: no ads, no tracking, no artificial limitations (e.g. watermark), minimal permissions...
     Please preserve the broad meaning of "respectful". It is a key part of FairScan's philosophy and should not be translated as "privacy-friendly" only.
     -->
-    <string name="app_tagline">A simple and respectful application to scan your documents.</string>
+    <string name="app_tagline">Scan and organize your documents. Everything stays on your device.</string>
     <!-- Button in the Crop screen -->
     <string name="apply">Apply</string>
     <!-- Icon description for ← at the top-left -->
@@ -244,9 +244,9 @@
     <string name="export_active_page">Only the current page will be exported. Long-press a page to select several.</string>
     <string name="share_separately">Share each page separately</string>
     <!-- Library folder setup screen -->
-    <string name="library_setup_title">Where should FairScan keep your documents?</string>
-    <string name="library_setup_body">FairScan keeps the original photos and your edits, so you can edit and export your documents again at any time. They stay on your phone even if FairScan is uninstalled.</string>
-    <string name="library_setup_unavailable_title">FairScan can no longer open your folder</string>
+    <string name="library_setup_title">Where should ScanGet keep your documents?</string>
+    <string name="library_setup_body">ScanGet keeps the original photos and your edits, so you can edit and export your documents again at any time. They stay on your phone even if ScanGet is uninstalled.</string>
+    <string name="library_setup_unavailable_title">ScanGet can no longer open your folder</string>
     <!-- %1$s: folder name -->
     <string name="library_setup_unavailable_body">The folder \"%1$s\" is not accessible any more. Choose it again or pick another one. The document you are working on is kept.</string>
     <string name="library_folder_recommended">Recommended</string>

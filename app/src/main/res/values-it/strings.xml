@@ -1,7 +1,6 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <string name="about">Informazioni</string>
     <string name="add_page">Aggiungi pagina</string>
-    <string name="app_tagline">Un\'app semplice e rispettosa per scansionare i tuoi documenti.</string>
     <string name="apply">Applica</string>
     <string name="back">Indietro</string>
     <string name="black_and_white_jpeg_hint">Le pagine in bianco e nero risulterebbero più leggere e nitide se esportate in PDF.</string>

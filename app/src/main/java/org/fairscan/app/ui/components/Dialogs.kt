@@ -24,11 +24,6 @@ import androidx.compose.ui.text.font.FontWeight
 import org.fairscan.app.R
 
 @Composable
-fun NewDocumentDialog(onConfirm: () -> Unit, showDialog: MutableState<Boolean>, title: String) {
-    ConfirmationDialog(title, stringResource(R.string.new_document_warning), showDialog, onConfirm)
-}
-
-@Composable
 fun ConfirmationDialog(
     title: String,
     message: String,

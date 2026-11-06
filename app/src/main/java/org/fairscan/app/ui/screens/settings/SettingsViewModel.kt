@@ -32,6 +32,7 @@ import org.fairscan.app.domain.ExportQuality
 data class SettingsUiState(
     val defaultColorMode: DefaultColorMode = DefaultColorMode.AUTO,
     val torchAlwaysOn: Boolean = false,
+    val ocrOnSave: Boolean = true,
     val export: ExportSettingsUiState = ExportSettingsUiState(),
     val installedOcrLanguages: Set<String> = emptySet(),
     val enabledOcrLanguages: Set<String> = emptySet(),
@@ -84,6 +85,7 @@ class SettingsViewModel(container: AppContainer) : ViewModel() {
         _installedLanguages,
         ocrLanguageRepo.enabledLanguages,
         _ocrDownload,
+        repo.ocrOnSave,
     ) { values ->
         val colorMode = values[0] as DefaultColorMode
         val torchAlwaysOn = values[1] as Boolean
@@ -93,9 +95,11 @@ class SettingsViewModel(container: AppContainer) : ViewModel() {
         @Suppress("UNCHECKED_CAST")
         val enabled = values[4] as Set<String>
         val download = values[5] as OcrDownloadUiState?
+        val ocrOnSave = values[6] as Boolean
         SettingsUiState(
             defaultColorMode = colorMode,
             torchAlwaysOn = torchAlwaysOn,
+            ocrOnSave = ocrOnSave,
             export = exportSettings,
             installedOcrLanguages = installed,
             enabledOcrLanguages = enabled,
@@ -121,6 +125,12 @@ class SettingsViewModel(container: AppContainer) : ViewModel() {
     fun setDefaultColorMode(pref: DefaultColorMode) {
         viewModelScope.launch {
             repo.setDefaultColorMode(pref)
+        }
+    }
+
+    fun setOcrOnSave(enabled: Boolean) {
+        viewModelScope.launch {
+            repo.setOcrOnSave(enabled)
         }
     }
 

@@ -14,15 +14,26 @@
  */
 package org.fairscan.app
 
+import android.util.Log
 import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import org.fairscan.app.data.ImageRepository
+import org.fairscan.app.data.ThumbnailCache
 import org.fairscan.app.data.Logger
+import org.fairscan.app.data.library.LastOpenedDocument
+import org.fairscan.app.data.library.LibraryIndex
+import org.fairscan.app.data.library.LibraryOcr
+import org.fairscan.app.data.library.LibraryLocations
+import org.fairscan.app.data.library.LibraryRepository
+import org.fairscan.app.data.library.LibraryStatus
+
 import org.fairscan.app.platform.ImageProcessor
 import java.io.File
+import java.util.Date
 import java.util.UUID
 
 class SessionViewModel(
@@ -30,6 +41,8 @@ class SessionViewModel(
     val launchMode: LaunchMode,
     appContainer: AppContainer
 ) : AndroidViewModel(app) {
+
+    private val appLogger = appContainer.logger
 
     val sessionDir: File = when (launchMode) {
         LaunchMode.NORMAL ->
@@ -45,9 +58,42 @@ class SessionViewModel(
         scanRootDir = sessionDir,
         scope = viewModelScope,
         logger = appContainer.logger,
+        documentNamer = { appContainer.settingsRepository.defaultFilenameStyle.value.filename(Date(it)) },
+        // A scan requested by another app is temporary: it is not kept in the library
+        libraryLocations = if (launchMode == LaunchMode.NORMAL) appContainer.libraryLocations else null,
+        libraryIndex = appContainer.libraryIndex,
+        lastOpened = appContainer.settingsRepository,
+        libraryOcr = appContainer.libraryOcr,
     )
 
     val imageRepository: ImageRepository = sessionContainer.imageRepository
+
+    /** Null when documents are not kept (scan requested by another app, no library location). */
+    val libraryRepository: LibraryRepository? = sessionContainer.libraryRepository
+
+    init {
+        // The working document is saved to the library as soon as there is one (a document left by a
+        // previous version, or by a crash, is added to it) and every time the library comes back
+        if (launchMode == LaunchMode.NORMAL) {
+            viewModelScope.launch {
+                appContainer.libraryLocations.status.collect { status ->
+                    if (status is LibraryStatus.Ready) saveToLibrary()
+                }
+            }
+        }
+    }
+
+    /** Saves the working document to the library now, without waiting for the autosave. */
+    fun saveToLibrary() {
+        val library = libraryRepository ?: return
+        viewModelScope.launch {
+            try {
+                library.flush()
+            } catch (e: Exception) {
+                appLogger.e("SessionViewModel", "Failed to save the working document", e)
+            }
+        }
+    }
 
     override fun onCleared() {
         super.onCleared()
@@ -63,14 +109,39 @@ class ScanSessionContainer(
     scanRootDir: File,
     scope: CoroutineScope,
     logger: Logger,
+    documentNamer: (Long) -> String,
+    libraryLocations: LibraryLocations?,
+    libraryIndex: LibraryIndex,
+    lastOpened: LastOpenedDocument,
+    libraryOcr: LibraryOcr? = null,
 ) {
     private val density = context.resources.displayMetrics.density
     private val thumbnailSizePx = (THUMBNAIL_SIZE_DP * density).toInt()
+    private val gridThumbnailSizePx = (GRID_THUMBNAIL_SIZE_DP * density).toInt()
 
     val imageRepository = ImageRepository(
         scanRootDir,
-        ImageProcessor(thumbnailSizePx),
+        ImageProcessor(thumbnailSizePx, gridThumbnailSizePx),
         scope,
         logger,
+        documentNamer,
+        trace = { if (BuildConfig.DEBUG) Log.d("ThumbTiming", it) },
+        // Shared by the sessions: a thumbnail made in one is found by the next
+        thumbnailDiskCache = ThumbnailCache(
+            File(context.cacheDir, "page-thumbnails"), thumbnailSizePx, gridThumbnailSizePx),
     )
+
+    val libraryRepository: LibraryRepository? = libraryLocations?.let { locations ->
+        LibraryRepository(
+            storeProvider = locations::currentStore,
+            imageRepository = imageRepository,
+            scope = scope,
+            logger = logger,
+            index = libraryIndex,
+            locationKey = locations::currentKey,
+            lastOpened = lastOpened,
+            ocr = libraryOcr,
+            trace = { if (BuildConfig.DEBUG) Log.d("ThumbTiming", it) },
+        )
+    }
 }

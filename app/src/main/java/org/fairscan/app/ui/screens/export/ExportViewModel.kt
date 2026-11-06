@@ -45,6 +45,7 @@ import kotlinx.coroutines.withContext
 import org.fairscan.app.AppContainer
 import org.fairscan.app.R
 import org.fairscan.app.data.FileManager
+import org.fairscan.app.data.DocumentInfo
 import org.fairscan.app.data.ImageRepository
 import org.fairscan.app.domain.ExportQuality
 import org.fairscan.app.domain.PageViewKey
@@ -53,6 +54,7 @@ import org.fairscan.app.domain.exportedPageNumbers
 import org.fairscan.app.domain.jpegsToExport
 import org.fairscan.app.domain.pagesForExport
 import org.fairscan.app.domain.pagesSuffix
+import org.fairscan.app.domain.PageOcrSource
 import org.fairscan.app.domain.pagesToExport
 import org.fairscan.app.domain.selectionAfterLongPress
 import org.fairscan.app.domain.selectionAfterTap
@@ -64,6 +66,9 @@ import java.io.IOException
 import java.util.concurrent.CancellationException
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
+
+/** How far sharing several documents is: [done] of [total] are ready. */
+data class DocumentShareProgress(val done: Int, val total: Int)
 
 sealed interface ExportEvent {
     data object RequestSave : ExportEvent
@@ -77,6 +82,20 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
     private val settingsRepository = container.settingsRepository
     private val ocrService = container.ocrService
     private val logger = container.logger
+    private val libraryLocations = container.libraryLocations
+    private val libraryExporter = container.libraryExporter
+
+    private val libraryOcr = container.libraryOcr
+
+    /**
+     * Where the PDF of the working document gets the text of its pages from: the library keeps what
+     * was recognized for the document, so that it is not recognized again.
+     */
+    private fun ocrOfWorkingDocument(): suspend (ScanPage) -> PageOcrSource? = { page ->
+        val store = libraryLocations.currentStore()
+        if (store == null) null
+        else libraryOcr.exportSource(store, imageRepository.documentInfo().id, page)
+    }
 
     private val _events = MutableSharedFlow<ExportEvent>()
     val events = _events.asSharedFlow()
@@ -87,7 +106,7 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
         pageFilter: (List<ScanPage>) -> List<ScanPage>,
         onPageCompleted: (Int) -> Unit,
     ): ExportResult.Pdf = withContext(Dispatchers.IO) {
-        val pageToExports = pagesToExport(imageRepository, exportQuality, pageFilter)
+        val pageToExports = pagesToExport(imageRepository, exportQuality, pageFilter, ocrOfWorkingDocument())
         val pdf = fileManager.generatePdf(pageToExports, disableOcr, onPageCompleted)
         return@withContext ExportResult.Pdf(pdf.file, pdf.sizeInBytes, pdf.pageCount)
     }
@@ -117,9 +136,12 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
         setFilename("")
     }
 
+    // The document being exported, read when the export is prepared
+    private var documentInfo: DocumentInfo? = null
+
     private fun defaultFilename(): String {
         val state = _uiState.value
-        return settingsRepository.defaultFilenameStyle.value.filename() +
+        return defaultExportBaseName(documentInfo, settingsRepository.defaultFilenameStyle.value) +
             pagesSuffix(state.exportedPageNumbers, state.totalPages)
     }
 
@@ -206,6 +228,7 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
     private fun prepare(keepSharedState: Boolean) {
         viewModelScope.launch {
             val allPages = imageRepository.pages()
+            documentInfo = imageRepository.documentInfo()
             // Forget selected pages that no longer exist
             val existing = allPages.map { it.id }.toSet()
             _uiState.update { state ->
@@ -319,8 +342,14 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
         val result = _uiState.value.result
             ?: throw IllegalStateException("Export result missing")
         ensureValidFilename()
-        val filename = _uiState.value.filename
-        val updated = when (result) {
+        val updated = renamedResult(result, _uiState.value.filename)
+        _uiState.update { it.copy(result = updated) }
+        return updated
+    }
+
+    /** The files of [result] named after [filename]. */
+    private fun renamedResult(result: ExportResult, filename: String): ExportResult =
+        when (result) {
             is ExportResult.Pdf -> {
                 val fileName = FileManager.addPdfExtensionIfMissing(filename)
                 val newFile = File(result.file.parentFile, fileName)
@@ -341,8 +370,88 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
                 result.copy(jpegFiles = renamedFiles)
             }
         }
-        _uiState.update { it.copy(result = updated) }
-        return updated
+
+    private val _documentShare = MutableStateFlow<DocumentShareProgress?>(null)
+
+    /** Progress of sharing several documents of the library, or null when that is not happening. */
+    val documentShare: StateFlow<DocumentShareProgress?> = _documentShare.asStateFlow()
+
+    private var documentShareJob: Job? = null
+
+    /**
+     * Shares the documents [ids] of the library, one file each (see [LibraryExporter]), in one share
+     * request, in the format and quality of the settings. [beforeExport] runs first, e.g. to save the
+     * document being edited, so that what is shared is what is on the screen. The document being
+     * edited is not touched.
+     */
+    fun shareDocuments(ids: List<String>, beforeExport: suspend () -> Unit = {}) {
+        if (ids.isEmpty() || documentShareJob?.isActive == true) return
+        _documentShare.value = DocumentShareProgress(0, ids.size)
+        documentShareJob = viewModelScope.launch {
+            try {
+                beforeExport()
+                val store = libraryLocations.currentStore() ?: error("The library is not available")
+                val quality = settingsRepository.exportQuality.first()
+                val format = settingsRepository.exportFormat.first()
+                val made = libraryExporter.export(store, ids, format, quality, preparationDir) { done, total ->
+                    _documentShare.value = DocumentShareProgress(done, total)
+                }
+                if (made.files.isNotEmpty()) {
+                    _events.emit(ExportEvent.Share(
+                        if (format == ExportFormat.JPEG) ExportResult.Jpeg(made.files, made.sizeInBytes)
+                        else ExportResult.Pdfs(made.files, made.sizeInBytes)))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logger.e("FairScan", "Failed to prepare the share of ${ids.size} documents", e)
+            } finally {
+                _documentShare.value = null
+            }
+        }
+    }
+
+    /** Stops [shareDocuments]; what it had made is removed. */
+    fun cancelDocumentShare() {
+        documentShareJob?.cancel()
+    }
+
+    private val _isQuickSharing = MutableStateFlow(false)
+
+    /** A share started from the library (see [shareWholeDocument]) is being prepared. */
+    val isQuickSharing: StateFlow<Boolean> = _isQuickSharing.asStateFlow()
+
+    /**
+     * Shares the whole current document without going through the export screen, in the format and
+     * quality of the settings, named after the document.
+     */
+    fun shareWholeDocument() {
+        if (_isQuickSharing.value) return
+        _isQuickSharing.value = true
+        viewModelScope.launch {
+            try {
+                val quality = settingsRepository.exportQuality.first()
+                val format = settingsRepository.exportFormat.first()
+                val name = defaultExportBaseName(
+                    imageRepository.documentInfo(), settingsRepository.defaultFilenameStyle.value)
+                val result = withContext(Dispatchers.IO) {
+                    val all: (List<ScanPage>) -> List<ScanPage> = { it }
+                    if (format == ExportFormat.JPEG) {
+                        renamedResult(generateJpegs(quality, all) {}, name)
+                    } else {
+                        renamedResult(generatePdf(quality, false, all) {}, name)
+                    }
+                }
+                _events.emit(ExportEvent.Share(result))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val message = "Failed to prepare share"
+                logger.e("FairScan", message, e)
+            } finally {
+                _isQuickSharing.value = false
+            }
+        }
     }
 
     fun onShareClicked() {
@@ -389,7 +498,7 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
             val base = if (state.isUserDefinedFilename) {
                 state.filename.removeSuffix(".pdf").removeSuffix(".jpg")
             } else {
-                settingsRepository.defaultFilenameStyle.value.filename()
+                defaultExportBaseName(imageRepository.documentInfo(), settingsRepository.defaultFilenameStyle.value)
             }
             preparationDir.mkdirs()
             fun nameOf(page: ScanPage) =
@@ -401,7 +510,7 @@ class ExportViewModel(container: AppContainer, val imageRepository: ImageReposit
                     file
                 }
             } else {
-                pagesToExport(imageRepository, exportQuality, pageFilter(state)).map {
+                pagesToExport(imageRepository, exportQuality, pageFilter(state), ocrOfWorkingDocument()).map {
                     val pdf = fileManager.generatePdf(listOf(it), false) {}
                     val target = File(pdf.file.parentFile, nameOf(it.page) + ".pdf")
                     renameFile(pdf.file, target)

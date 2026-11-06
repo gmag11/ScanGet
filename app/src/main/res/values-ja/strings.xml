@@ -1,7 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
     <string name="about">このアプリについて</string>
     <string name="add_page">ページを追加</string>
-    <string name="app_tagline">シンプルで安心なドキュメントスキャナーです。</string>
     <string name="apply">適用</string>
     <string name="back">戻る</string>
     <string name="black_and_white_jpeg_hint">白黒ページは PDF のほうが小さく鮮明になります。</string>

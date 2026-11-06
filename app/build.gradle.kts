@@ -1,5 +1,6 @@
 import com.android.build.api.variant.FilterConfiguration
 import java.net.URL
+import java.util.Properties
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.tasks.OutputDirectory
@@ -54,7 +55,7 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "org.fairscan.app"
+        applicationId = "net.gmartin.scanget"
         // Based on tests against virtual devices, the app works with Android 8.0 (API level 26).
         // It crashes because of LiteRT on earlier versions.
         // LiteRT documentation only states that version 1.2.0 requires Android 12:
@@ -65,22 +66,59 @@ android {
         versionName = "2.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
     }
 
-    val hasSigning = listOf(
+    // The key that signs the app. It is never in the repository: it is read from ../keys/key.properties
+    // (storeFile is relative to that file), or else from the RELEASE_* Gradle properties (CI, F-Droid).
+    // Without either the release build is left unsigned and the debug build uses the standard debug key.
+    class SigningKey(
+        val storeFile: File,
+        val storePassword: String,
+        val keyAlias: String,
+        val keyPassword: String,
+        val source: String,
+    )
+    val ownerKeyFile = rootProject.file("../keys/key.properties")
+    val releaseProperties = listOf(
         "RELEASE_STORE_FILE",
         "RELEASE_STORE_PASSWORD",
         "RELEASE_KEY_ALIAS",
         "RELEASE_KEY_PASSWORD"
-    ).all { project.hasProperty(it) }
+    )
+    val signingKey: SigningKey? = when {
+        ownerKeyFile.isFile -> {
+            val properties = Properties().apply { ownerKeyFile.inputStream().use { load(it) } }
+            fun entry(name: String) = properties.getProperty(name)?.takeIf { it.isNotBlank() }
+                ?: throw GradleException("${ownerKeyFile.name} has no '$name' entry")
+            val named = File(entry("storeFile"))
+            val storeFile = if (named.isAbsolute) named else File(ownerKeyFile.parentFile, named.path)
+            if (!storeFile.isFile) {
+                throw GradleException("The keystore named by 'storeFile' in ${ownerKeyFile.name} does not exist")
+            }
+            SigningKey(
+                storeFile, entry("storePassword"), entry("keyAlias"), entry("keyPassword"),
+                "../keys/key.properties"
+            )
+        }
+        releaseProperties.all { project.hasProperty(it) } -> SigningKey(
+            file(project.property("RELEASE_STORE_FILE") as String),
+            project.property("RELEASE_STORE_PASSWORD") as String,
+            project.property("RELEASE_KEY_ALIAS") as String,
+            project.property("RELEASE_KEY_PASSWORD") as String,
+            "the RELEASE_* Gradle properties"
+        )
+        else -> null
+    }
+    if (signingKey != null) logger.lifecycle("Signing with the key from ${signingKey.source}")
 
     signingConfigs {
-        if (hasSigning) {
-            create("release") {
-                storeFile = file(project.property("RELEASE_STORE_FILE") as String)
-                storePassword = project.property("RELEASE_STORE_PASSWORD") as String
-                keyAlias = project.property("RELEASE_KEY_ALIAS") as String
-                keyPassword = project.property("RELEASE_KEY_PASSWORD") as String
+        if (signingKey != null) {
+            create("owner") {
+                storeFile = signingKey.storeFile
+                storePassword = signingKey.storePassword
+                keyAlias = signingKey.keyAlias
+                keyPassword = signingKey.keyPassword
             }
         }
     }
@@ -93,8 +131,14 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            if (hasSigning) {
-                signingConfig = signingConfigs.getByName("release")
+            if (signingKey != null) {
+                signingConfig = signingConfigs.getByName("owner")
+            }
+        }
+        // The same key for debug builds, so that a debug APK and a release one can replace each other
+        if (signingKey != null) {
+            debug {
+                signingConfig = signingConfigs.getByName("owner")
             }
         }
     }
@@ -136,7 +180,7 @@ androidComponents {
             val abi = output.filters
                 .find { it.filterType == FilterConfiguration.FilterType.ABI }
                 ?.identifier
-            output.outputFileName = "FairScan-${output.versionName.get()}-${abi}.apk"
+            output.outputFileName = "ScanGet-${output.versionName.get()}-${abi}.apk"
         }
     }
 }

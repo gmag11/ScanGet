@@ -1,12 +1,12 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <string name="about">Acerca de</string>
     <string name="add_page">Agregar página</string>
-    <string name="app_tagline">Una aplicación sencilla y respetuosa para escanear tus documentos.</string>
+    <string name="app_tagline">Escanea y organiza tus documentos. Todo se queda en tu dispositivo.</string>
     <string name="apply">Aplicar</string>
     <string name="back">Atrás</string>
     <string name="black_and_white_jpeg_hint">Las páginas en blanco y negro serían más pequeñas y nítidas si se exportaran como PDF.</string>
     <string name="camera_permission_denied">Permiso de cámara denegado</string>
-    <string name="camera_permission_rationale">La aplicación necesita acceso a la cámara para escanear documentos. Las imágenes capturadas se guardan solo en este dispositivo y se eliminarán cuando cierres el escaneo actual.</string>
+    <string name="camera_permission_rationale">La aplicación necesita acceso a la cámara para escanear documentos. Las imágenes capturadas se guardan solo en este dispositivo, en la carpeta de tu biblioteca, hasta que las elimines.</string>
     <string name="cancel">Cancelar</string>
     <string name="change_directory">Cambiar carpeta</string>
     <string name="clear_text">Borrar texto</string>
@@ -122,4 +122,96 @@
     <string name="pages_selected">%1$d seleccionadas</string>
     <string name="export_active_page">Solo se exportará la página actual. Mantén pulsada una página para seleccionar varias.</string>
     <string name="share_separately">Compartir cada página por separado</string>
+    <!-- Library folder setup screen -->
+    <string name="library_setup_title">¿Dónde debe guardar ScanGet tus documentos?</string>
+    <string name="library_setup_body">ScanGet guarda las fotos originales y tus ediciones, para que puedas editar y exportar tus documentos de nuevo en cualquier momento. Se quedan en tu teléfono aunque desinstales ScanGet.</string>
+    <string name="library_setup_unavailable_title">ScanGet ya no puede abrir tu carpeta</string>
+    <string name="library_setup_unavailable_body">La carpeta \"%1$s\" ya no es accesible. Elígela de nuevo o escoge otra. El documento en el que trabajas se conserva.</string>
+    <string name="library_setup_choose_folder">Elegir una carpeta</string>
+    <string name="library_setup_choose_folder_hint">Elige una carpeta o crea una nueva en el selector. ScanGet solo tendrá acceso a esa carpeta. El selector no permite la raíz del almacenamiento ni Descargas: elige o crea una subcarpeta.</string>
+    <string name="library_folder_error">ScanGet no ha podido usar esa carpeta. Elige otra.</string>
+    <string name="library_folder_working">Preparando la carpeta…</string>
+    <string name="library_confirm_title">Esta carpeta ya existe</string>
+    <string name="library_confirm_not_empty">\"%1$s\" no está vacía.</string>
+    <plurals name="library_confirm_documents">
+        <item quantity="one">%d documento de FairScan, probablemente de una instalación anterior. Se añadirá a tu biblioteca.</item>
+        <item quantity="other">%d documentos de FairScan, probablemente de una instalación anterior. Se añadirán a tu biblioteca.</item>
+    </plurals>
+    <plurals name="library_confirm_others">
+        <item quantity="one">%d archivo o carpeta más. Se ignorará y no se modificará.</item>
+        <item quantity="other">%d archivos y carpetas más. Se ignorarán y no se modificarán.</item>
+    </plurals>
+    <string name="library_confirm_question">¿Usar esta carpeta?</string>
+    <string name="library_confirm_use">Usar esta carpeta</string>
+    <string name="library_confirm_choose_another">Elegir otra</string>
+    <string name="library_move_title">¿Mover tus documentos?</string>
+    <plurals name="library_move_message">
+        <item quantity="one">%1$d documento está en \"%2$s\". ¿Moverlo a \"%3$s\"?</item>
+        <item quantity="other">%1$d documentos están en \"%2$s\". ¿Moverlos a \"%3$s\"?</item>
+    </plurals>
+    <string name="library_move_yes">Mover</string>
+    <string name="library_move_no">No mover</string>
+    <string name="library_moving">Moviendo %1$d de %2$d…</string>
+    <string name="library_moving_not_moved">Algunos documentos no se han podido mover y siguen en la carpeta anterior.</string>
+    <string name="settings_section_library">Biblioteca</string>
+    <string name="library_directory">Carpeta de la biblioteca</string>
+    <string name="library_recent">Reciente</string>
+    <string name="library_all_documents">Todos los documentos</string>
+    <string name="library_add_pages">Añadir páginas</string>
+    <string name="library_scan">Escanear</string>
+    <string name="library_empty_title">Tus escaneos aparecerán aquí</string>
+    <string name="library_empty_subtitle">Cada documento se guarda automáticamente</string>
+    <string name="library_document_actions">Acciones del documento</string>
+    <string name="library_rename">Renombrar</string>
+    <string name="library_rename_title">Renombrar documento</string>
+    <string name="library_rename_label">Nombre</string>
+    <string name="library_delete_title">¿Eliminar documento?</string>
+    <string name="library_delete_message">Se eliminarán las capturas originales. Los archivos exportados se conservan.</string>
+    <string name="library_opening">Abriendo…</string>
+    <string name="library_sharing">Preparando…</string>
+    <string name="overview_delete_document">Eliminar documento</string>
+    <string name="overview_rename_document">Renombrar documento</string>
+    <string name="library_search">Buscar</string>
+    <string name="library_search_hint">Buscar documentos</string>
+    <string name="library_search_clear">Borrar</string>
+    <string name="library_search_close">Cerrar la búsqueda</string>
+    <string name="library_no_results">Ningún documento coincide</string>
+    <string name="library_close_selection">Cerrar la selección</string>
+    <plurals name="library_delete_selected_title">
+        <item quantity="one">¿Eliminar %d documento?</item>
+        <item quantity="other">¿Eliminar %d documentos?</item>
+    </plurals>
+    <string name="library_share_cancel">Cancelar el envío</string>
+    <string name="settings_ocr_on_save">Reconocer el texto al guardar un escaneo</string>
+    <string name="settings_ocr_on_save_summary">Se hace en segundo plano: los PDF se generan más rápido y se puede buscar por el texto de los documentos</string>
+    <!-- Vista de documento: selección de páginas -->
+    <string name="page_selection_close">Cerrar la selección</string>
+    <string name="page_action_move">Mover</string>
+    <string name="page_action_copy">Copiar</string>
+    <plurals name="page_delete_title">
+        <item quantity="one">¿Eliminar %d página?</item>
+        <item quantity="other">¿Eliminar %d páginas?</item>
+    </plurals>
+    <string name="page_delete_message">Se eliminarán las páginas y sus capturas originales.</string>
+    <string name="page_destination_move_title">Mover a</string>
+    <string name="page_destination_copy_title">Copiar a</string>
+    <string name="page_destination_new">Documento nuevo</string>
+    <string name="page_destination_loading">Cargando documentos…</string>
+    <plurals name="page_destination_pages">
+        <item quantity="one">%1$d página</item>
+        <item quantity="other">%1$d páginas</item>
+    </plurals>
+    <plurals name="page_transfer_deleted">
+        <item quantity="one">%d página eliminada</item>
+        <item quantity="other">%d páginas eliminadas</item>
+    </plurals>
+    <plurals name="page_transfer_copied">
+        <item quantity="one">%1$d página copiada a «%2$s»</item>
+        <item quantity="other">%1$d páginas copiadas a «%2$s»</item>
+    </plurals>
+    <plurals name="page_transfer_moved">
+        <item quantity="one">%1$d página movida a «%2$s»</item>
+        <item quantity="other">%1$d páginas movidas a «%2$s»</item>
+    </plurals>
+    <string name="page_transfer_failed">No se pudieron mover o copiar las páginas. No se ha eliminado nada.</string>
 </resources>

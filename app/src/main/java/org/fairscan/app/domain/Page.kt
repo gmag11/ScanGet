@@ -19,6 +19,7 @@ import org.fairscan.imageprocessing.ColorMode
 import org.fairscan.imageprocessing.ImageSize
 import org.fairscan.imageprocessing.OpticalMeasures
 import org.fairscan.imageprocessing.Quad
+import java.util.zip.CRC32
 
 data class PageMetadata(
     val normalizedQuad: Quad,
@@ -46,7 +47,16 @@ data class PageViewKey(
     val colorMode: ColorMode?,
     val quadVersion: Int,
     val adjustments: Adjustments = Adjustments.NEUTRAL,
-)
+) {
+    /**
+     * 8 hex digits that identify what the processed pixels depend on (rotation, crop, filter and
+     * adjustments): files made from a page are only valid while this stays the same.
+     */
+    fun renderKey(): String {
+        val canonical = "r${rotation.degrees}|${colorMode?.name}|q$quadVersion|${adjustments.canonical()}"
+        return "%08x".format(CRC32().apply { update(canonical.toByteArray()) }.value)
+    }
+}
 enum class Rotation(val degrees: Int) {
     R0(0),
     R90(90),

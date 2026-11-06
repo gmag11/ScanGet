@@ -21,7 +21,7 @@ import org.fairscan.app.BuildConfig
 import org.fairscan.app.ui.uriForFile
 import java.io.File
 
-const val EMAIL_ADDRESS = "contact@fairscan.org"
+const val EMAIL_ADDRESS = "github@gmartin.net"
 
 fun createContactEmailIntent(): Intent =
     Intent(Intent.ACTION_SENDTO).apply {
@@ -34,7 +34,7 @@ fun createEmailWithImageIntent(context: Context, imageFile: File?): Intent {
         putExtra(Intent.EXTRA_EMAIL, arrayOf(EMAIL_ADDRESS))
         putExtra(
             Intent.EXTRA_SUBJECT,
-            "FairScan ${BuildConfig.VERSION_NAME}"
+            "ScanGet ${BuildConfig.VERSION_NAME}"
         )
         if (imageFile != null) {
             val uri = uriForFile(context, imageFile)

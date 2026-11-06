@@ -36,6 +36,9 @@ import org.fairscan.imageprocessing.Point
 import org.fairscan.imageprocessing.Quad
 import org.fairscan.imageprocessing.autoColorMode
 import org.fairscan.imageprocessing.createQuad
+import org.fairscan.imageprocessing.decodeJpegOrPng
+import org.fairscan.imageprocessing.decodeReductionFor
+import org.fairscan.imageprocessing.encodedImageSize
 import org.fairscan.imageprocessing.extractDocument
 import org.fairscan.imageprocessing.resizeForMaxPixels
 import org.fairscan.imageprocessing.rotate
@@ -47,7 +50,10 @@ import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 import kotlin.math.min
 
-class ImageProcessor(private val thumbnailSizePx: Int) : ImageTransformations {
+class ImageProcessor(
+    private val thumbnailSizePx: Int,
+    private val gridThumbnailSizePx: Int = thumbnailSizePx,
+) : ImageTransformations {
 
     override fun rotate(input: EncodedImage, rotationDegrees: Int): EncodedImage {
         return transform(input, ExportQuality.BALANCED.jpegQuality) {
@@ -55,20 +61,40 @@ class ImageProcessor(private val thumbnailSizePx: Int) : ImageTransformations {
         }
     }
 
-    override fun resizeToThumbnail(input: EncodedImage): EncodedImage {
-        val maxSize = thumbnailSizePx.toFloat()
-        return transform(input, 85) { src ->
+    override fun resizeToThumbnail(input: EncodedImage): EncodedImage =
+        resizeTo(input, thumbnailSizePx)
+
+    override fun resizeToGridThumbnail(input: EncodedImage): EncodedImage =
+        resizeTo(input, gridThumbnailSizePx)
+
+    private fun resizeTo(input: EncodedImage, maxSizePx: Int): EncodedImage {
+        val maxSize = maxSizePx.toFloat()
+        // A JPEG is decoded already reduced (1/2, 1/4 or 1/8) as far as the thumbnail allows: much
+        // faster than decoding the whole page to shrink it afterwards
+        val reduction = (input as? Jpeg)
+            ?.let { encodedImageSize(it.bytes) }
+            ?.let { (width, height) -> decodeReductionFor(width, height, maxSizePx) }
+            ?: 1
+        val src = if (reduction > 1) decodeJpegOrPng(input.bytes, reduction) else input.toMat()
+        var scaled: Mat? = null
+        try {
             val ratio = min(maxSize / src.width(), maxSize / src.height())
             val newW = (src.width() * ratio).toDouble()
             val newH = (src.height() * ratio).toDouble()
-            val scaled = Mat()
+            scaled = Mat()
             try {
                 Imgproc.resize(src, scaled, Size(newW, newH))
             } catch (e: CvException) {
                 val msg = "Resize failed. src=${src.width()}x${src.height()} dst=${newW}x${newH}"
                 throw IllegalStateException(msg, e)
             }
-            scaled
+            return when (input) {
+                is Jpeg -> Jpeg.fromMat(scaled, 85)
+                is Png -> Png.fromMat(scaled)
+            }
+        } finally {
+            src.release()
+            scaled?.release()
         }
     }
 

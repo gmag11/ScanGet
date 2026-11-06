@@ -1,7 +1,6 @@
 <resources>
     <string name="about">O aplikaci</string>
     <string name="add_page">Přidat stránku</string>
-    <string name="app_tagline">Jednoduchá a respektující aplikace pro skenování vašich dokumentů</string>
     <string name="apply">Použít</string>
     <string name="back">Zpět</string>
     <string name="black_and_white_jpeg_hint">Černobílé stránky by byly menší a ostřejší, kdyby byly exportovány do PDF.</string>

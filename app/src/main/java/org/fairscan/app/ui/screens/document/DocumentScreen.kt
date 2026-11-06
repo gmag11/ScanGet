@@ -31,6 +31,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoFixHigh
@@ -60,6 +62,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import android.graphics.Bitmap
@@ -155,6 +159,7 @@ fun DocumentScreen(
             onCropClick,
             adjustmentState,
             adjustmentActions,
+            onPageSelected,
             modifier
         )
         if (showDeletePageDialog.value) {
@@ -176,11 +181,11 @@ private fun DocumentPreview(
     onCropClick: () -> Unit,
     adjustmentState: AdjustmentState<Bitmap>?,
     adjustmentActions: AdjustmentActions,
+    onPageSelected: (Int) -> Unit,
     modifier: Modifier,
 ) {
     val currentPageIndex = uiState.currentPageIndex
     val document = uiState.document
-    val pageKey = uiState.currentPage?.key
     Column (
         modifier = modifier
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
@@ -192,14 +197,12 @@ private fun DocumentPreview(
                 // The preview has no tone applied: the color filter on top does it. Until the first
                 // preview is ready the page that is already rendered is shown, as it is.
                 val preview = adjustmentState.preview
-                val bitmap = preview ?: uiState.currentPage?.bitmap
-                if (bitmap != null && pageKey != null) {
-                    PageImage(
-                        bitmap = bitmap,
-                        pageKey = pageKey,
-                        colorFilter = preview?.let { toneColorFilter(adjustmentState.adjustments) },
-                    )
-                }
+                PagePager(
+                    uiState, onPageSelected,
+                    swipeEnabled = false,
+                    currentBitmap = preview ?: uiState.currentPage?.bitmap,
+                    currentColorFilter = preview?.let { toneColorFilter(adjustmentState.adjustments) },
+                )
                 if (adjustmentState.isRendering) {
                     CircularProgressIndicator(
                         modifier = Modifier
@@ -210,10 +213,12 @@ private fun DocumentPreview(
                     )
                 }
             } else {
-                val bitmap = uiState.currentPage?.bitmap
-                if (bitmap != null && pageKey != null) {
-                    PageImage(bitmap, pageKey, colorFilter = null)
-                }
+                PagePager(
+                    uiState, onPageSelected,
+                    swipeEnabled = true,
+                    currentBitmap = uiState.currentPage?.bitmap,
+                    currentColorFilter = null,
+                )
                 if (uiState.currentPage?.isLoading ?: false) {
                     Box(
                         modifier = Modifier
@@ -255,6 +260,63 @@ private fun DocumentPreview(
         }
         if (adjustmentState != null) {
             AdjustmentsPanel(adjustmentState, adjustmentActions)
+        }
+    }
+}
+
+/**
+ * The page image(s). Only the images slide when the user swipes; the buttons and the rest of the
+ * screen stay where they are. The view model's current page follows the pager once it settles, and
+ * the pager follows the view model when the page is changed from elsewhere (the strip).
+ */
+@Composable
+private fun PagePager(
+    uiState: DocumentUiState,
+    onPageSelected: (Int) -> Unit,
+    swipeEnabled: Boolean,
+    currentBitmap: Bitmap?,
+    currentColorFilter: ColorFilter?,
+) {
+    val pages = uiState.document.pages
+    val currentIndex = uiState.currentPageIndex
+    val pagerState = rememberPagerState(initialPage = currentIndex.coerceAtLeast(0)) { pages.size }
+    val latestIndex by rememberUpdatedState(currentIndex)
+    val latestOnPageSelected by rememberUpdatedState(onPageSelected)
+
+    LaunchedEffect(currentIndex, pages.size) {
+        if (currentIndex in 0 until pages.size && pagerState.currentPage != currentIndex) {
+            pagerState.animateScrollToPage(currentIndex)
+        }
+    }
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }.collect { settled ->
+            if (settled != latestIndex) latestOnPageSelected(settled)
+        }
+    }
+
+    // The page state describes one page and its neighbours; whatever page it was made for.
+    val loaded = uiState.currentPage
+    HorizontalPager(
+        state = pagerState,
+        userScrollEnabled = swipeEnabled,
+        beyondViewportPageCount = 1,
+        modifier = Modifier.fillMaxSize(),
+    ) { index ->
+        val key = pages.getOrNull(index)?.key
+        val bitmap = when {
+            loaded == null -> null
+            index == loaded.index -> if (index == currentIndex) currentBitmap else loaded.bitmap
+            index == loaded.index - 1 -> loaded.previousBitmap
+            index == loaded.index + 1 -> loaded.nextBitmap
+            else -> null
+        }
+        Box(Modifier.fillMaxSize()) {
+            if (bitmap != null && key != null) {
+                PageImage(
+                    bitmap, key,
+                    colorFilter = if (index == currentIndex) currentColorFilter else null,
+                )
+            }
         }
     }
 }
@@ -449,7 +511,7 @@ fun DocumentScreenPreview() {
         )
         val key = PageViewKey("123", Rotation.R0, null, 0)
         DocumentScreen(
-            uiState = DocumentUiState(1, CurrentPageUiState(key,image, COLOR, true), document),
+            uiState = DocumentUiState(1, CurrentPageUiState(key,image, COLOR, true, index = 1), document),
             navigation = dummyNavigation(),
             onExportClick = {},
             onDeleteImage = { },

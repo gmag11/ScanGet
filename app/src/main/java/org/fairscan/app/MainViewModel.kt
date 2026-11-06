@@ -30,6 +30,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
@@ -39,11 +41,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.fairscan.app.data.ImageRepository
 import org.fairscan.app.data.Logger
+import org.fairscan.app.data.DocumentInfo
+import org.fairscan.app.data.library.LibraryEntry
+import org.fairscan.app.data.library.LibraryRepository
+import org.fairscan.app.data.library.LibraryUnavailableException
+import org.fairscan.app.data.library.LibraryStatus
 import org.fairscan.app.domain.CapturedPage
 import org.fairscan.app.domain.Rotation
+import org.fairscan.app.domain.PageViewKey
 import org.fairscan.app.domain.ScanPage
 import org.fairscan.app.platform.PreviewRenderer
 import org.fairscan.app.ui.NavigationState
+import org.fairscan.app.ui.initialNavigationState
 import org.fairscan.app.ui.Screen
 import org.fairscan.app.ui.screens.crop.CropInitState
 import org.fairscan.app.ui.screens.document.CurrentPageUiState
@@ -59,8 +68,17 @@ import org.fairscan.imageprocessing.ImageSize
 import org.fairscan.imageprocessing.Quad
 import kotlin.math.min
 
+private const val TAG = "MainViewModel"
+
 @OptIn(ExperimentalCoroutinesApi::class)
-class MainViewModel(val imageRepository: ImageRepository, private val logger: Logger): ViewModel() {
+class MainViewModel(
+    val imageRepository: ImageRepository,
+    private val logger: Logger,
+    // Where documents are kept; null when they are not (scan requested by another app)
+    private val library: LibraryRepository? = null,
+    // State of the library location; null when there is no library to set up
+    private val libraryStatus: StateFlow<LibraryStatus?>? = null,
+): ViewModel() {
 
     private val _navigationState = MutableStateFlow<NavigationState?>(null)
     val currentScreen: StateFlow<Screen?> = _navigationState.map { it?.current }
@@ -68,19 +86,32 @@ class MainViewModel(val imageRepository: ImageRepository, private val logger: Lo
 
     private val _pages = MutableStateFlow<List<ScanPage>>(emptyList())
 
+    private val _documentName = MutableStateFlow("")
+
+    /** The name of the document being edited. */
+    val documentName: StateFlow<String> = _documentName
+
 
     init {
         viewModelScope.launch {
             val pages = imageRepository.pages()
 
             _pages.value = pages
+            refreshDocumentName()
 
-            _navigationState.value =
-                if (pages.isEmpty()) {
-                    NavigationState.initial()
-                } else {
-                    NavigationState.initial().navigateTo(Screen.Main.ResumeScan)
+            // Wait until the library location is known
+            val status = libraryStatus?.filterNotNull()?.first()
+            _navigationState.value = initialNavigationState(status)
+        }
+        // Once the library folder is chosen, the setup screen gives way to the usual first screen
+        libraryStatus?.let { statuses ->
+            viewModelScope.launch {
+                statuses.collect { status ->
+                    if (status is LibraryStatus.Ready && _navigationState.value?.current == Screen.Main.LibrarySetup) {
+                        _navigationState.value = initialNavigationState(status)
+                    }
                 }
+            }
         }
     }
 
@@ -105,23 +136,30 @@ class MainViewModel(val imageRepository: ImageRepository, private val logger: Lo
     val loadingPageIds: StateFlow<Set<String>> = _loadingPageIds
     private val currentPageUiState: Flow<CurrentPageUiState?> =
         combine(_currentPageIndex, _pages, _loadingPageIds) { index, pages, loadingIds ->
-            val page = pages.getOrNull(index)
-            Pair(page, loadingIds)
+            Triple(pages, index, loadingIds)
         }
-            .mapLatest { (page, loadingIds) ->
-                page?.let {
+            .mapLatest { (pages, index, loadingIds) ->
+                pages.getOrNull(index)?.let {
                     val isLoading = it.id in loadingIds
-                    val canBeCropped = page.metadata != null
-                    val bitmap = try {
-                         imageRepository.image(it.key())?.toBitmap()
-                    } catch (e: Exception) {
-                        logger.e("MainViewModel", "Failed to load image for ${it.id}", e)
-                        null
-                    }
-                    CurrentPageUiState(it.key(), bitmap, it.colorMode, canBeCropped, isLoading)
+                    val canBeCropped = it.metadata != null
+                    val bitmap = loadBitmap(it)
+                    // The neighbours are loaded too, so they are already there when the user swipes
+                    CurrentPageUiState(
+                        it.key(), bitmap, it.colorMode, canBeCropped, isLoading,
+                        index = index,
+                        previousBitmap = pages.getOrNull(index - 1)?.let { loadBitmap(it) },
+                        nextBitmap = pages.getOrNull(index + 1)?.let { loadBitmap(it) },
+                    )
                 }
             }
             .flowOn(Dispatchers.IO)
+
+    private suspend fun loadBitmap(page: ScanPage): Bitmap? = try {
+        imageRepository.image(page.key())?.toBitmap()
+    } catch (e: Exception) {
+        logger.e("MainViewModel", "Failed to load image for ${page.id}", e)
+        null
+    }
 
     val documentUiState: StateFlow<DocumentUiState> =
         combine(_currentPageIndex, currentPageUiState, documentUiModel) { index, page, document ->
@@ -150,7 +188,12 @@ class MainViewModel(val imageRepository: ImageRepository, private val logger: Lo
 
     fun navigateBack() {
         cancelAdjusting()
-        _navigationState.update { stack -> stack?.navigateBack() }
+        _navigationState.update { stack -> stack?.navigateBack(hasPages = _pages.value.isNotEmpty()) }
+        // Back to the editor from elsewhere shows a page that exists
+        val pageCount = _pages.value.size
+        if (_navigationState.value?.current is Screen.Main.Document && pageCount > 0) {
+            _currentPageIndex.value = min(pageCount - 1, _currentPageIndex.value)
+        }
     }
 
     fun rotateCurrentPage(clockwise: Boolean) {
@@ -366,14 +409,170 @@ class MainViewModel(val imageRepository: ImageRepository, private val logger: Lo
             "No current page for index $index (${pages.size} pages)")
     }
 
+    /**
+     * Leaves the current document, which stays in the library, and starts an empty one. If the
+     * document cannot be saved because the library folder is not available, it is kept and the
+     * setup screen is shown instead.
+     */
     fun startNewDocument() {
-        _pages.value = persistentListOf()
         viewModelScope.launch {
+            if (library != null && !library.canStartNewDocument()) {
+                navigateTo(Screen.Main.LibrarySetup)
+                return@launch
+            }
+            _pages.value = persistentListOf()
             withContext(Dispatchers.IO) {
-                imageRepository.clear()
+                library?.startNewDocument() ?: imageRepository.clear()
+            }
+            refreshDocumentName()
+        }
+    }
+
+    private suspend fun refreshDocumentName() {
+        _documentName.value = imageRepository.documentInfo().name
+    }
+
+    /** Renames the document being edited. A blank name is not accepted; returns whether it was. */
+    fun renameDocument(name: String): Boolean {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return false
+        viewModelScope.launch {
+            val id = imageRepository.documentInfo().id
+            library?.rename(id, trimmed) ?: imageRepository.rename(trimmed)
+            refreshDocumentName()
+        }
+        return true
+    }
+
+    /** Deletes the document being edited and goes back to the library. */
+    fun deleteCurrentDocument() {
+        viewModelScope.launch {
+            deleteDocument(imageRepository.documentInfo().id)
+            navigateTo(Screen.Main.Library)
+        }
+    }
+
+    // --- Page selection actions (document overview) ---
+
+    private val _pageTransfer = MutableStateFlow<PageTransferState>(PageTransferState.Idle)
+
+    /** What the page actions of the overview are doing, or have just done. */
+    val pageTransfer: StateFlow<PageTransferState> = _pageTransfer
+
+    /** The result of the last page action was shown. */
+    fun pageTransferShown() {
+        if (_pageTransfer.value !is PageTransferState.Running) _pageTransfer.value = PageTransferState.Idle
+    }
+
+    /** The saved documents other than the open one, to choose where to copy or move pages. */
+    suspend fun otherDocuments(): List<LibraryEntry> = library?.otherDocuments().orEmpty()
+
+    /** Removes the pages [ids] from the open document; without pages left, the document goes too. */
+    fun deletePages(ids: Set<String>) = runPageTransfer {
+        removePages(ids)
+        PageTransferState.Done(PageTransferState.Action.DELETED, ids.size, null)
+    }
+
+    /** Adds copies of the pages [ids] to the document [targetId], or to a new one if it is null. */
+    fun copyPages(ids: Set<String>, targetId: String?) = runPageTransfer {
+        val target = appendPagesTo(ids, targetId)
+        PageTransferState.Done(PageTransferState.Action.COPIED, ids.size, target.name)
+    }
+
+    /** Like [copyPages], and then removes the pages from the open document. */
+    fun movePages(ids: Set<String>, targetId: String?) = runPageTransfer {
+        val target = appendPagesTo(ids, targetId)
+        removePages(ids)
+        PageTransferState.Done(PageTransferState.Action.MOVED, ids.size, target.name)
+    }
+
+    private suspend fun appendPagesTo(ids: Set<String>, targetId: String?): DocumentInfo =
+        library?.appendPages(ids, targetId) ?: throw LibraryUnavailableException()
+
+    private suspend fun removePages(ids: Set<String>) {
+        val pages = withContext(Dispatchers.IO) {
+            imageRepository.deletePages(ids)
+            imageRepository.pages()
+        }
+        _pages.value = pages
+        if (pages.isEmpty()) {
+            deleteDocument(imageRepository.documentInfo().id)
+            navigateTo(Screen.Main.Library)
+        }
+    }
+
+    private fun runPageTransfer(action: suspend () -> PageTransferState) {
+        if (_pageTransfer.value is PageTransferState.Running) return
+        _pageTransfer.value = PageTransferState.Running
+        viewModelScope.launch {
+            _pageTransfer.value = try {
+                action()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logger.e(TAG, "Page action failed", e)
+                PageTransferState.Failed
             }
         }
     }
+
+    /** A page as a thumbnail big enough for the grid of the overview. */
+    suspend fun gridThumbnail(key: PageViewKey): Bitmap? = withContext(Dispatchers.IO) {
+        imageRepository.getGridThumbnail(key)?.toBitmap()
+    }
+
+    private val _isOpeningDocument = MutableStateFlow(false)
+
+    /** A document is being opened (copied from the library to be edited), which can take a moment. */
+    val isOpeningDocument: StateFlow<Boolean> = _isOpeningDocument
+
+    /** Makes the saved document [id] the current one; [onOpened] is called once it is. */
+    fun openDocument(id: String, onOpened: () -> Unit = {}) {
+        cancelAdjusting()
+        _isOpeningDocument.value = true
+        viewModelScope.launch {
+            try {
+                val opened = withContext(Dispatchers.IO) { library?.open(id) ?: false }
+                if (opened) {
+                    _pages.value = imageRepository.pages()
+                    _currentPageIndex.value = 0
+                    refreshDocumentName()
+                    onOpened()
+                }
+            } finally {
+                _isOpeningDocument.value = false
+            }
+        }
+    }
+
+    /**
+     * Removes a document from the library. If it is the one being edited, the app forgets its pages
+     * too, so that the next scan starts with an empty document.
+     */
+    suspend fun deleteDocument(id: String) {
+        val library = library ?: return
+        val wasCurrent = imageRepository.documentInfo().id == id
+        library.delete(id)
+        if (wasCurrent) {
+            _pages.value = persistentListOf()
+            refreshDocumentName()
+        }
+    }
+
+    // Set by the library for the screen it opens next, which uses it once
+
+    private var importOnCameraOpen = false
+    private var exportAllPages = false
+
+    /** The camera, when opened next, starts by asking which photos to import. */
+    fun requestImportOnCameraOpen() { importOnCameraOpen = true }
+
+    fun consumeImportOnCameraOpen(): Boolean = importOnCameraOpen.also { importOnCameraOpen = false }
+
+    /** The export screen, when opened next, exports every page and not only the current one. */
+    fun requestExportAllPages() { exportAllPages = true }
+
+    fun consumeExportAllPages(): Boolean = exportAllPages.also { exportAllPages = false }
 
     fun handleImageCaptured(capturedPage: CapturedPage) {
         viewModelScope.launch {
@@ -433,4 +632,14 @@ class MainViewModel(val imageRepository: ImageRepository, private val logger: Lo
         }
 
     }
+}
+
+/** The state of a delete, copy or move of pages started from the document overview. */
+sealed interface PageTransferState {
+    object Idle : PageTransferState
+    object Running : PageTransferState
+    object Failed : PageTransferState
+    enum class Action { DELETED, COPIED, MOVED }
+    /** [documentName] is the document that received the pages (null when they were deleted). */
+    data class Done(val action: Action, val count: Int, val documentName: String?) : PageTransferState
 }

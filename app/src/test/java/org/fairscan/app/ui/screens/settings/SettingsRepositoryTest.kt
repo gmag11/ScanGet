@@ -16,6 +16,9 @@ package org.fairscan.app.ui.screens.settings
 
 import android.content.ContextWrapper
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import org.fairscan.app.data.library.StoredLibraryLocation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -87,6 +90,45 @@ class SettingsRepositoryTest {
         assertThat(repo.torchAlwaysOn.first()).isTrue()
         repo.setTorchAlwaysOn(false)
         assertThat(repo.torchAlwaysOn.first()).isFalse()
+        file.delete()
+    }
+
+    @Test
+    fun ocr_on_save_is_on_by_default_and_persists() = runTest {
+        val file = java.io.File.createTempFile("settings", ".preferences_pb").apply { delete() }
+        val scope = TestScope(UnconfinedTestDispatcher())
+        val dataStore = PreferenceDataStoreFactory.create(scope = scope.backgroundScope) { file }
+        val repo = SettingsRepository(ContextWrapper(null), dataStore, scope.backgroundScope)
+
+        assertThat(repo.ocrOnSave.first()).isTrue()
+        repo.setOcrOnSave(false)
+        assertThat(repo.ocrOnSave.first()).isFalse()
+        repo.setOcrOnSave(true)
+        assertThat(repo.ocrOnSave.first()).isTrue()
+        file.delete()
+        assertThat(SettingsUiState().ocrOnSave).isTrue()
+    }
+
+    @Test
+    fun library_location_round_trips_and_a_path_saved_by_an_earlier_build_is_not_chosen() = runTest {
+        val file = java.io.File.createTempFile("settings", ".preferences_pb").apply { delete() }
+        val scope = TestScope(UnconfinedTestDispatcher())
+        val dataStore = PreferenceDataStoreFactory.create(scope = scope.backgroundScope) { file }
+        val repo = SettingsRepository(ContextWrapper(null), dataStore, scope.backgroundScope)
+
+        assertThat(repo.load()).isNull()
+        repo.save(StoredLibraryLocation("content://tree/Scans", "Scans"))
+        assertThat(repo.load()).isEqualTo(StoredLibraryLocation("content://tree/Scans", "Scans"))
+
+        // A library saved as a path (kind DIRECT) needed "All files access": it cannot be reached
+        dataStore.edit {
+            it[stringPreferencesKey("library_location_kind")] = "DIRECT"
+            it[stringPreferencesKey("library_location")] = "/storage/emulated/0/FairScan"
+        }
+        assertThat(repo.load()).isNull()
+
+        repo.save(null)
+        assertThat(repo.load()).isNull()
         file.delete()
     }
 }

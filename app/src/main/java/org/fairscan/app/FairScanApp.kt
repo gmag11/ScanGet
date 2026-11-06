@@ -24,15 +24,22 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.fairscan.app.data.FileLogger
 import org.fairscan.app.data.FileManager
 import org.fairscan.app.data.LogRepository
 import org.fairscan.app.data.OcrLanguageRepository
+import org.fairscan.app.data.library.AndroidLibraryPlatform
+import org.fairscan.app.data.library.LibraryExporter
+import org.fairscan.app.data.library.LibraryIndex
+import org.fairscan.app.data.library.LibraryLocations
+import org.fairscan.app.data.library.LibraryOcr
 import org.fairscan.app.domain.ImageSegmentationService
 import org.fairscan.app.domain.OcrService
 import org.fairscan.app.platform.AndroidImageLoader
 import org.fairscan.app.platform.AndroidPdfWriter
+import org.fairscan.app.platform.ImageProcessor
 import org.fairscan.app.ui.screens.camera.CameraViewModel
 import org.fairscan.app.ui.screens.settings.SettingsRepository
 import org.fairscan.app.ui.screens.settings.SettingsViewModel
@@ -49,6 +56,10 @@ class FairScanApp : Application() {
 }
 
 const val THUMBNAIL_SIZE_DP = 120
+
+// Pages in the grid of the document overview (cells of 150 to 230dp): a portrait page fills the width of
+// the cell, so its longest side is made big enough for the widest cell (230dp / 0.7 for an A4 page)
+const val GRID_THUMBNAIL_SIZE_DP = 330
 
 private val Context.dataStore by preferencesDataStore(name = "fairscan_settings")
 
@@ -71,9 +82,35 @@ class AppContainer(context: Context) {
     val imageLoader = AndroidImageLoader(context.contentResolver)
     val settingsRepository = SettingsRepository(context, dataStore, scope)
 
+    /** Where the library is kept (a folder of the user's storage), and whether it can be used. */
+    val libraryLocations = LibraryLocations(
+        settings = settingsRepository,
+        platform = AndroidLibraryPlatform(context),
+        // Development builds kept documents in app storage before the library folder existed
+        legacyDirs = listOf(File(context.filesDir, "library")),
+    )
+    val libraryIndex = LibraryIndex(File(context.filesDir, "library-index.json"))
+    /** Recognizes the text of the pages saved in the library, in the background. */
+    val libraryOcr = LibraryOcr(
+        recognizer = ocrService,
+        enabled = { settingsRepository.ocrOnSave.first() },
+        scope = scope,
+        logger = logger,
+    )
+    /** Makes the files to share of documents of the library, without opening them. */
+    val libraryExporter = LibraryExporter(
+        workDir = File(context.cacheDir, "library-export"),
+        // Only used to render pages again, which does not depend on the thumbnail size
+        transformations = ImageProcessor(THUMBNAIL_SIZE_DP),
+        fileManager = fileManager,
+        logger = logger,
+        libraryOcr = libraryOcr,
+    )
+
     init {
         scope.launch { imageSegmentationService.initialize() }
         scope.launch { ocrService.initialize() }
+        scope.launch { libraryLocations.load() }
     }
 
     @Suppress("UNCHECKED_CAST")

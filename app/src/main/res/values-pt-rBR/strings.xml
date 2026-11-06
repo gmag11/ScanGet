@@ -1,7 +1,6 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <string name="about">Sobre</string>
     <string name="add_page">Adicionar página</string>
-    <string name="app_tagline">Um aplicativo simples e respeitoso para digitalizar seus documentos.</string>
     <string name="apply">Aplicar</string>
     <string name="back">Voltar</string>
     <string name="black_and_white_jpeg_hint">As páginas em preto e branco ficariam menores e mais nítidas se exportadas como PDF.</string>

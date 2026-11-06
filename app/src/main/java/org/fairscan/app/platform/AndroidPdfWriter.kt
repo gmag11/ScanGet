@@ -33,11 +33,13 @@ import com.tom_roush.pdfbox.pdmodel.graphics.color.PDDeviceGray
 import com.tom_roush.pdfbox.pdmodel.graphics.image.JPEGFactory
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import org.fairscan.app.BuildConfig
+import org.fairscan.app.data.PageRecognition
 import org.fairscan.app.data.PdfWriter
 import org.fairscan.app.domain.Bitonal
 import org.fairscan.app.domain.EncodedImage
 import org.fairscan.app.domain.OcrService
 import org.fairscan.app.domain.PageToExport
+import org.fairscan.app.domain.halfSize
 import org.fairscan.app.domain.packBitonal
 import org.fairscan.imageprocessing.ColorMode
 import org.fairscan.imageprocessing.EstimatedDimensions
@@ -51,6 +53,14 @@ import java.util.Locale
 
 class AndroidPdfWriter(val ocrService: OcrService, val assets: AssetManager) : PdfWriter {
 
+    // Black and white pages carry four times the pixels for the PDF. Text recognition gets the same
+    // size as with the other modes. Null when there is no OCR language: that is not "no text".
+    private suspend fun recognize(image: EncodedImage, blackAndWhite: Boolean): PageRecognition? {
+        if (!ocrService.isAvailable) return null
+        val bitmap = if (blackAndWhite) halfSize(image.toBitmap()) else image.toBitmap()
+        return PageRecognition(ocrService.runOcr(bitmap), bitmap.width, bitmap.height)
+    }
+
     override suspend fun writePdfFromJpegs(
         pages: List<PageToExport<EncodedImage>>,
         outputStream: OutputStream,
@@ -63,6 +73,7 @@ class AndroidPdfWriter(val ocrService: OcrService, val assets: AssetManager) : P
         doc.use { document ->
             val ocrDocument = OcrDocument(document, assets)
             for ((index, page) in pages.withIndex()) {
+                val toExport = page
                 val jpegOrPng = page.image.get()
                 val encoding = pdfImageEncoding(page.page.colorMode)
                 val blackAndWhite = encoding == PdfImageEncoding.CCITT_G4
@@ -99,18 +110,18 @@ class AndroidPdfWriter(val ocrService: OcrService, val assets: AssetManager) : P
 
                 if (!disableOcr) {
                     try {
-                        // Black and white pages carry four times the pixels for the PDF. Text
-                        // recognition gets the same size as with the other modes.
-                        val bitmap = if (blackAndWhite) halfSize(jpegOrPng.toBitmap())
-                        else jpegOrPng.toBitmap()
-                        val ocrTextBoxes = ocrService.runOcr(bitmap)
-                        val pdfPageDimensions = PageDimensions(
-                            bitmap.width,
-                            bitmap.height,
-                            widthPoints,
-                            heightPoints
-                        )
-                        ocrDocument.addPage(page, ocrTextBoxes, pdfPageDimensions)
+                        // Text recognized before is used as it is: positions only depend on the size of
+                        // the image it was recognized in, which is stored with it
+                        val recognition = toExport.recognizedText { recognize(jpegOrPng, blackAndWhite) }
+                        if (recognition != null) {
+                            val pdfPageDimensions = PageDimensions(
+                                recognition.imageWidth,
+                                recognition.imageHeight,
+                                widthPoints,
+                                heightPoints
+                            )
+                            ocrDocument.addPage(page, recognition.textBoxes, pdfPageDimensions)
+                        }
                     } catch (e: Exception) {
                         Log.e("AndroidPdfWriter", "Failed to run OCR on page $index", e)
                     }
@@ -148,12 +159,6 @@ private fun createCcittG4Image(document: PDDocument, bitonal: Bitonal): PDImageX
     decodeParms.setInt(COSName.K, -1)
     image.cosObject.setItem(COSName.DECODE_PARMS, decodeParms)
     return image
-}
-
-private fun halfSize(bitmap: Bitmap): Bitmap {
-    val scaled = Bitmap.createScaledBitmap(bitmap, bitmap.width / 2, bitmap.height / 2, true)
-    bitmap.recycle()
-    return scaled
 }
 
 internal enum class PdfImageEncoding { CCITT_G4, JPEG }

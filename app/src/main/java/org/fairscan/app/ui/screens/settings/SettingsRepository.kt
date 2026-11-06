@@ -25,10 +25,14 @@ import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import org.fairscan.app.R
+import org.fairscan.app.data.library.LastOpenedDocument
+import org.fairscan.app.data.library.LibraryLocationSettings
+import org.fairscan.app.data.library.StoredLibraryLocation
 import org.fairscan.app.domain.ExportQuality
 import org.fairscan.imageprocessing.ColorMode
 import java.text.SimpleDateFormat
@@ -39,7 +43,7 @@ class SettingsRepository(
     private val context: Context,
     private val dataStore: DataStore<Preferences>,
     private val scope: CoroutineScope,
-) {
+) : LibraryLocationSettings, LastOpenedDocument {
 
     private val DEFAULT_COLOR_MODE = stringPreferencesKey("default_color_mode")
     private val DEFAULT_FILENAME_STYLE = stringPreferencesKey("default_filename_style")
@@ -47,12 +51,21 @@ class SettingsRepository(
     private val EXPORT_FORMAT = stringPreferencesKey("export_format")
     private val EXPORT_QUALITY = stringPreferencesKey("export_quality")
     private val TORCH_ALWAYS_ON = booleanPreferencesKey("torch_always_on")
+    private val OCR_ON_SAVE = booleanPreferencesKey("ocr_on_save")
+    private val LIBRARY_LOCATION_KIND = stringPreferencesKey("library_location_kind")
+    private val LIBRARY_LOCATION = stringPreferencesKey("library_location")
+    private val LIBRARY_LOCATION_NAME = stringPreferencesKey("library_location_name")
+    private val LAST_OPENED_DOCUMENT = stringPreferencesKey("last_opened_document_id")
 
     val defaultColorMode: Flow<DefaultColorMode> =
         dataStore.data.map { prefs -> parseDefaultColorMode(prefs[DEFAULT_COLOR_MODE]) }
 
     val torchAlwaysOn: Flow<Boolean> =
         dataStore.data.map { prefs -> prefs[TORCH_ALWAYS_ON] ?: false }
+
+    /** Whether the text of a page is recognized in the background when it is saved. */
+    val ocrOnSave: Flow<Boolean> =
+        dataStore.data.map { prefs -> prefs[OCR_ON_SAVE] ?: true }
 
     val exportDirUri: Flow<String?> =
         dataStore.data.map { prefs ->
@@ -103,6 +116,12 @@ class SettingsRepository(
         }
     }
 
+    suspend fun setOcrOnSave(enabled: Boolean) {
+        dataStore.edit { prefs ->
+            prefs[OCR_ON_SAVE] = enabled
+        }
+    }
+
     suspend fun setTorchAlwaysOn(enabled: Boolean) {
         dataStore.edit { prefs ->
             prefs[TORCH_ALWAYS_ON] = enabled
@@ -116,6 +135,38 @@ class SettingsRepository(
             } else {
                 prefs[EXPORT_DIR_URI] = uri
             }
+        }
+    }
+
+    /** The library location chosen by the user, or null if there is none yet. */
+    override suspend fun load(): StoredLibraryLocation? =
+        dataStore.data.first().let { prefs ->
+            // A library saved as a path by an earlier build ("DIRECT") cannot be reached any more: it
+            // counts as not chosen, and picking the same folder again brings its documents back
+            if (prefs[LIBRARY_LOCATION_KIND] != "SAF") return@let null
+            prefs[LIBRARY_LOCATION]?.let { StoredLibraryLocation(it, prefs[LIBRARY_LOCATION_NAME]) }
+        }
+
+    override suspend fun save(location: StoredLibraryLocation?) {
+        dataStore.edit { prefs ->
+            if (location == null) {
+                prefs.remove(LIBRARY_LOCATION_KIND)
+                prefs.remove(LIBRARY_LOCATION)
+                prefs.remove(LIBRARY_LOCATION_NAME)
+            } else {
+                prefs[LIBRARY_LOCATION_KIND] = "SAF"
+                prefs[LIBRARY_LOCATION] = location.uri
+                if (location.name != null) prefs[LIBRARY_LOCATION_NAME] = location.name
+                else prefs.remove(LIBRARY_LOCATION_NAME)
+            }
+        }
+    }
+
+    override suspend fun lastOpenedId(): String? = dataStore.data.first()[LAST_OPENED_DOCUMENT]
+
+    override suspend fun setLastOpenedId(id: String?) {
+        dataStore.edit { prefs ->
+            if (id == null) prefs.remove(LAST_OPENED_DOCUMENT) else prefs[LAST_OPENED_DOCUMENT] = id
         }
     }
 

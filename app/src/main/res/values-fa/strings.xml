@@ -2,7 +2,6 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <string name="about">درباره</string>
     <string name="add_page">افزودن صفحه</string>
-    <string name="app_tagline">یک برنامهٔ ساده و محترم برای پویش سندهایتان.</string>
     <string name="apply">اعمال</string>
     <string name="back">بازگشت</string>
     <string name="black_and_white_jpeg_hint">اگر صفحات سیاه و سفید به صورت PDF خروجی گرفته شوند، حجم کمتر و وضوح بیشتری خواهند داشت.</string>
